@@ -4,6 +4,19 @@
   'use strict';
 
   const STORE_KEY = 'heartnote.v1';
+  const WHO_KEY = 'heartnote.who.v1';
+  const SHARE_KEY = 'heartnote.share.v1';
+  const DIRTY_KEY = 'heartnote.dirty.v1';
+
+  // 수유 앱과 같은 Firebase Realtime Database. 부부 기록은 /couple_rooms/{방} 에 따로 저장해요.
+  const DEFAULT_FIREBASE_URL = 'https://baby-feeding-9f820-default-rtdb.asia-southeast1.firebasedatabase.app';
+  const ROOM_ROOT = 'couple_rooms';
+  const APP_URL = 'https://bswjys.github.io/couple-love/';
+  const REQ_TIMEOUT = 8000;        // 네트워크 요청 제한 시간
+  const POLL_MS = 5000;            // 실시간 스트림이 막혔을 때 대신 확인하는 주기
+  const STREAM_IDLE_MS = 75000;    // 이 시간 동안 아무 소식이 없으면 스트림을 다시 연다
+  const TOMB_KEEP_MS = 90 * 24 * 3600 * 1000; // 오래된 삭제 표시 정리 기준
+
   const MOODS = ['설렘', '포근', '행복', '고마움'];
   const MOOD_EMOJI = { 설렘: '💓', 포근: '🧸', 행복: '😊', 고마움: '🙏' };
   const WINDOWS = [
@@ -83,19 +96,31 @@
   const defaultState = () => ({
     version: 1,
     records: [],
-    settings: { pinOn: false, pin: '', startDate: '' },
-    mission: { date: '', idx: 0, done: false },
+    tomb: {},
+    settings: { pinOn: false, pin: '', startDate: '', startUpdatedAt: 0 },
+    mission: { date: '', idx: 0, done: false, updatedAt: 0 },
   });
+
+  function legacyStamp(date, time) {
+    const d = parseKey(date);
+    const [h, m] = time.split(':').map(Number);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, m).getTime();
+  }
 
   function normalizeRecord(r) {
     if (!r || !isDateKey(r.date)) return null;
     const mood = MOODS.includes(r.mood) ? r.mood : '';
+    const time = isTimeKey(r.time) ? r.time : '12:00';
+    let updatedAt = Number(r.updatedAt);
+    if (!isFinite(updatedAt) || updatedAt <= 0) updatedAt = legacyStamp(r.date, time);
     return {
       id: typeof r.id === 'string' && r.id ? r.id : 'r' + Math.random().toString(36).slice(2, 9),
       date: r.date,
-      time: isTimeKey(r.time) ? r.time : '12:00',
+      time,
       mood,
       memo: typeof r.memo === 'string' ? r.memo.slice(0, 60) : '',
+      by: r.by === 'wife' || r.by === 'husband' ? r.by : null,
+      updatedAt,
     };
   }
 
@@ -113,6 +138,7 @@
         s.settings.pinOn = parsed.settings.pinOn === true;
         s.settings.pin = typeof parsed.settings.pin === 'string' && /^\d{4}$/.test(parsed.settings.pin) ? parsed.settings.pin : '';
         s.settings.startDate = isDateKey(parsed.settings.startDate) ? parsed.settings.startDate : '';
+        s.settings.startUpdatedAt = Number(parsed.settings.startUpdatedAt) || 0;
         if (!s.settings.pin) s.settings.pinOn = false;
       }
       if (parsed.mission && typeof parsed.mission === 'object') {
@@ -120,7 +146,14 @@
           date: typeof parsed.mission.date === 'string' ? parsed.mission.date : '',
           idx: Number.isInteger(parsed.mission.idx) ? parsed.mission.idx : 0,
           done: parsed.mission.done === true,
+          updatedAt: Number(parsed.mission.updatedAt) || 0,
         };
+      }
+      if (parsed.tomb && typeof parsed.tomb === 'object') {
+        Object.keys(parsed.tomb).forEach((id) => {
+          const v = Number(parsed.tomb[id]);
+          if (id && isFinite(v) && v > 0) s.tomb[id] = v;
+        });
       }
     } catch (e) { /* 깨진 저장값은 새로 시작 */ }
     sortRecords(s.records);
@@ -145,6 +178,688 @@
   const state = load();
   let lastDeleted = null;
   let lastFocus = null;
+
+  /* ═════════════ 기록자 (아내 / 남편) ═════════════ */
+  let who = 'wife';
+  const WHO_LABEL = { wife: '아내', husband: '남편' };
+  const WHO_EMOJI = { wife: '👩', husband: '👨' };
+  function byLabel(by) {
+    return WHO_LABEL[by] ? `${WHO_EMOJI[by]} ${WHO_LABEL[by]}` : '';
+  }
+
+  function setWho(next, opts) {
+    who = next === 'husband' ? 'husband' : 'wife';
+    try { localStorage.setItem(WHO_KEY, who); } catch (e) { /* 무시 */ }
+    const w = $('whoWife');
+    const h = $('whoHusband');
+    if (w) w.setAttribute('aria-pressed', who === 'wife' ? 'true' : 'false');
+    if (h) h.setAttribute('aria-pressed', who === 'husband' ? 'true' : 'false');
+    if (opts && opts.toast) showToast(who === 'wife' ? '👩 아내로 기록할게요' : '👨 남편으로 기록할게요');
+  }
+
+  /* ═════════════ 부부 공유 (Firebase RTDB REST + SSE) ═════════════
+   * 수유 앱과 같은 Firebase 주소를 쓰되, 기록은 /couple_rooms/{방} 에만 저장해요.
+   * PIN 잠금은 기기마다의 사생활 보호라서 서버에 올리지 않아요.
+   */
+  const share = { url: '', room: '', linked: false };
+  const net = {
+    mode: 'local',      // local | connecting | live | polling | offline | error
+    es: null,
+    pollTimer: null,
+    watchTimer: null,
+    lastEvent: 0,
+    restarts: 0,
+    fails: 0,
+    mirror: null,       // 마지막으로 받은 방 전체 스냅숏
+    dirty: new Set(),   // 아직 서버에 못 보낸 기록 id · meta 키
+    flushing: false,
+    announce: false,
+    joined: false,
+  };
+  let flushTimer = null;
+  const META_START = 'meta:startDate';
+  const META_MISSION = 'meta:mission';
+  // 이번 실행에서 사용자가 직접 바꾼 항목 (방에 처음 들어갈 때 서버 값을 그대로 따를지 판단)
+  const touched = { startDate: false, mission: false };
+
+  function normDb(u) {
+    let s = String(u || '').trim();
+    if (!s) return '';
+    if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+    return s.replace(/\/+$/, '');
+  }
+  function normRoom(u) {
+    return String(u || '')
+      .replace(/\s+/g, '')
+      .replace(/[^0-9A-Za-z\uAC00-\uD7A3_-]/g, '')
+      .replace(/[a-z]/g, (c) => c.toUpperCase())
+      .slice(0, 12);
+  }
+  function roomValid(code) {
+    return typeof code === 'string' && code.length >= 2 && code.length <= 12;
+  }
+  const roomReady = () => roomValid(share.room);
+  const shared = () => !!(share.url && roomReady());
+
+  function roomBase() { return `${share.url}/${ROOM_ROOT}/${encodeURIComponent(share.room)}`; }
+  function recordsUrl() { return `${roomBase()}/records.json`; }
+  function recordUrl(id) { return `${roomBase()}/records/${encodeURIComponent(id)}.json`; }
+  function metaUrl(key) { return `${roomBase()}/${key}.json`; }
+  function roomUrl() { return `${roomBase()}.json`; }
+  function inviteLink() { return `${APP_URL}?room=${encodeURIComponent(share.room)}`; }
+
+  /* ── 설정 읽기/쓰기 ── */
+  function loadShare() {
+    try {
+      const raw = localStorage.getItem(SHARE_KEY);
+      if (raw) {
+        const d = JSON.parse(raw);
+        if (typeof d.url === 'string') share.url = normDb(d.url);
+        if (typeof d.room === 'string') share.room = normRoom(d.room);
+      }
+    } catch (e) { /* 무시 */ }
+    if (!share.url) share.url = normDb(DEFAULT_FIREBASE_URL);
+    if (!roomReady(share.room)) share.room = '';
+
+    // 초대 링크(?room=우리둘)로 열면 코드 입력 없이 바로 연결
+    let linked = '';
+    try {
+      linked = normRoom(new URLSearchParams(location.search).get('room') || '');
+    } catch (e) { /* 무시 */ }
+    if (roomValid(linked)) {
+      share.room = linked;
+      share.linked = true;
+      persistShare();
+    }
+
+    try {
+      const w = localStorage.getItem(WHO_KEY);
+      if (w === 'wife' || w === 'husband') who = w;
+    } catch (e) { /* 무시 */ }
+
+    try {
+      const arr = JSON.parse(localStorage.getItem(DIRTY_KEY) || '[]');
+      if (Array.isArray(arr)) arr.forEach((k) => { if (typeof k === 'string') net.dirty.add(k); });
+    } catch (e) { /* 무시 */ }
+  }
+
+  function persistShare() {
+    try {
+      localStorage.setItem(SHARE_KEY, JSON.stringify({ url: share.url, room: share.room }));
+    } catch (e) { /* 무시 */ }
+  }
+
+  function saveDirty() {
+    try { localStorage.setItem(DIRTY_KEY, JSON.stringify(Array.from(net.dirty))); } catch (e) { /* 무시 */ }
+  }
+
+  /* ── 상태 표시 ── */
+  function setMode(mode) {
+    if (net.mode === mode) { renderShare(); return; }
+    net.mode = mode;
+    renderShare();
+  }
+
+  function renderShare() {
+    const m = net.mode;
+    const pill = $('sharePill');
+    if (!pill) return;
+    pill.dataset.mode = m;
+    $('shareDot').className = `dot dot-${m}`;
+    const status = $('shareStatus');
+    if (status) {
+      status.dataset.mode = m;
+      $('shareStatusDot').className = `dot dot-${m}`;
+    }
+
+    let label = '부부 공유 켜기';
+    if (m === 'connecting') label = '연결 중…';
+    else if (m === 'live' || m === 'polling') label = '부부 공유 중';
+    else if (m === 'offline') label = '오프라인 · 저장 중';
+    else if (m === 'error') label = '연결 확인 필요';
+    $('shareLabel').textContent = label;
+
+    const roomShown = m !== 'local' && m !== 'error' && !!share.room;
+    $('shareRoom').textContent = roomShown ? share.room : '';
+    $('shareRoom').hidden = !roomShown;
+
+    pill.setAttribute('aria-label', m === 'local'
+      ? '부부 공유 켜기 · 부부 공유 설정 열기'
+      : `${label}${roomShown ? ` (방: ${share.room})` : ''} · 부부 공유 설정 열기`);
+
+    const saveBtn = $('shareSave');
+    if (saveBtn) saveBtn.textContent = m === 'local' ? '부부 공유 켜기' : '연결하기';
+
+    const n = state.records.length;
+    const st = $('shareStatusText');
+    if (st) {
+      if (m === 'live') st.textContent = `● 부부 공유 중 (방: ${share.room})${n ? ` · 하트 ${n}개` : ''}`;
+      else if (m === 'polling') st.textContent = `● 부부 공유 중 (방: ${share.room}) · 5초마다 확인${n ? ` · 하트 ${n}개` : ''}`;
+      else if (m === 'connecting') st.textContent = `연결 중… (방: ${share.room})`;
+      else if (m === 'offline') st.textContent = `오프라인 · 이 기기에 먼저 저장하고 있어요${share.room ? ` (방: ${share.room})` : ''}`;
+      else if (m === 'error') st.textContent = '연결하지 못했어요 · 방 코드와 인터넷을 확인해 주세요';
+      else st.textContent = '부부 공유 꺼짐 · 이 기기에만 저장돼요';
+    }
+
+    const foot = $('homeFootNote');
+    if (foot) {
+      foot.textContent = (m === 'live' || m === 'polling')
+        ? `부부 방 ${share.room} · 두 사람이 함께 보고 있어요`
+        : (m === 'offline' && share.room)
+          ? '오프라인 · 다시 연결되면 자동으로 맞춰져요'
+          : '기록은 이 기기 브라우저에만 저장돼요 · 부부 공유를 켜면 둘이 함께 봐요';
+    }
+
+    const sendBtn = $('shareSend');
+    const leaveBtn = $('shareLeave');
+    if (sendBtn) sendBtn.hidden = !share.room;
+    if (leaveBtn) leaveBtn.hidden = !share.room;
+  }
+
+  /* ── 네트워크 ── */
+  function fbRequest(method, url, body) {
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), REQ_TIMEOUT) : null;
+    const opts = { method, cache: 'no-store' };
+    if (ctrl) opts.signal = ctrl.signal;
+    if (body !== undefined) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(body);
+    }
+    return fetch(url, opts).then((res) => {
+      if (timer) clearTimeout(timer);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.text();
+    }, (err) => {
+      if (timer) clearTimeout(timer);
+      throw err;
+    });
+  }
+
+  function fbGet(url) {
+    return fbRequest('GET', url).then((txt) => {
+      try { return txt ? JSON.parse(txt) : null; } catch (e) { return null; }
+    });
+  }
+
+  /* ── 연결 ── */
+  function connectShare(opts) {
+    const announce = !!(opts && opts.announce);
+    closeStream();
+    stopPolling();
+    net.mirror = null;
+    net.restarts = 0;
+    net.fails = 0;
+    net.announce = announce;
+    net.joined = false;
+
+    if (!shared()) { setMode('local'); return; }
+    if (navigator.onLine === false) { setMode('offline'); return; }
+    setMode('connecting');
+    openStream();
+  }
+
+  function openStream() {
+    closeStream();
+    if (!shared()) { setMode('local'); return; }
+    if (typeof EventSource !== 'function') { startPolling(); return; }
+
+    let es;
+    const url = roomUrl();
+    try {
+      es = new EventSource(url);
+    } catch (e) {
+      console.warn('실시간 연결을 시작하지 못했어요', e);
+      startPolling();
+      return;
+    }
+    net.es = es;
+    net.lastEvent = Date.now();
+
+    es.addEventListener('open', () => {
+      if (net.es !== es) return;
+      net.lastEvent = Date.now();
+      net.restarts = 0;
+      net.fails = 0;
+      if (net.mode !== 'live') setMode('live');
+      startWatchdog();
+      if (net.announce) {
+        net.announce = false;
+        showToast(`부부 방 ${share.room} 연결됐어요 💗`);
+      }
+    });
+    es.addEventListener('put', (ev) => {
+      if (net.es !== es) return;
+      net.lastEvent = Date.now();
+      onStream('put', ev.data);
+    });
+    es.addEventListener('patch', (ev) => {
+      if (net.es !== es) return;
+      net.lastEvent = Date.now();
+      onStream('patch', ev.data);
+    });
+    es.addEventListener('keep-alive', () => {
+      if (net.es !== es) return;
+      net.lastEvent = Date.now();
+    });
+
+    es.onerror = () => {
+      if (net.es !== es) return;
+      net.lastEvent = 0;
+      if (es.readyState === 2 /* CLOSED */) {
+        es.close();
+        net.es = null;
+        net.restarts += 1;
+        if (net.restarts >= 2) { startPolling(); return; }
+        setMode('connecting');
+        setTimeout(() => { if (shared() && navigator.onLine !== false) openStream(); }, 1500);
+      } else {
+        setMode('connecting');
+      }
+    };
+  }
+
+  function closeStream() {
+    if (net.es) {
+      try { net.es.close(); } catch (e) { /* 무시 */ }
+      net.es = null;
+    }
+    if (net.watchTimer) { clearInterval(net.watchTimer); net.watchTimer = null; }
+  }
+
+  function startWatchdog() {
+    if (net.watchTimer) clearInterval(net.watchTimer);
+    net.watchTimer = setInterval(() => {
+      if (net.mode !== 'live') return;
+      if (navigator.onLine === false) { setMode('offline'); return; }
+      if (!net.lastEvent) return;
+      if (Date.now() - net.lastEvent > STREAM_IDLE_MS) {
+        net.lastEvent = Date.now();
+        openStream();
+      }
+    }, 15000);
+  }
+
+  function startPolling() {
+    closeStream();
+    if (!shared()) { setMode('local'); return; }
+    if (net.pollTimer) return;
+    setMode('polling');
+    const tick = () => {
+      fbGet(roomUrl()).then((data) => {
+        net.fails = 0;
+        applyMirror(data);
+        if (net.mode !== 'polling') setMode('polling');
+      }).catch(() => {
+        net.fails += 1;
+        if (navigator.onLine === false) setMode('offline');
+        else if (net.fails >= 3) setMode('error');
+      });
+    };
+    tick();
+    net.pollTimer = setInterval(tick, POLL_MS);
+  }
+
+  function stopPolling() {
+    if (net.pollTimer) { clearInterval(net.pollTimer); net.pollTimer = null; }
+  }
+
+  /* ── 스트림 데이터 → 미러 갱신 ── */
+  function applyMirror(data) {
+    net.mirror = (data && typeof data === 'object' && !Array.isArray(data)) ? data : {};
+    reconcile();
+  }
+
+  function onStream(kind, raw) {
+    let msg;
+    try { msg = JSON.parse(raw); } catch (e) { return; }
+    if (!msg || typeof msg.path !== 'string') return;
+
+    const segs = msg.path.split('/').filter(Boolean);
+    if (!segs.length) {
+      net.mirror = (kind === 'put' && msg.data && typeof msg.data === 'object' && !Array.isArray(msg.data)) ? msg.data : {};
+    } else {
+      if (!net.mirror || typeof net.mirror !== 'object') net.mirror = {};
+      let node = net.mirror;
+      for (let i = 0; i < segs.length - 1; i += 1) {
+        if (!node[segs[i]] || typeof node[segs[i]] !== 'object') node[segs[i]] = {};
+        node = node[segs[i]];
+      }
+      const last = segs[segs.length - 1];
+      if (kind === 'patch' && msg.data && typeof msg.data === 'object' && node[last] && typeof node[last] === 'object') {
+        const merged = Object.assign({}, node[last], msg.data);
+        Object.keys(merged).forEach((k) => { if (merged[k] === null) delete merged[k]; });
+        node[last] = merged;
+      } else if (msg.data === null || msg.data === undefined) {
+        delete node[last];
+      } else {
+        node[last] = msg.data;
+      }
+    }
+
+    if (net.mode !== 'live') setMode('live');
+    reconcile();
+  }
+
+  /* ── 병합 ── */
+  function localRecords() {
+    const m = new Map();
+    state.records.forEach((r) => {
+      m.set(r.id, {
+        date: r.date, time: r.time, mood: r.mood || '', memo: r.memo || '',
+        by: r.by || null, updatedAt: Number(r.updatedAt) || legacyStamp(r.date, r.time),
+      });
+    });
+    Object.keys(state.tomb).forEach((id) => {
+      m.set(id, { deleted: true, updatedAt: state.tomb[id] });
+    });
+    return m;
+  }
+
+  function remoteRecords(obj) {
+    const m = new Map();
+    if (!obj || typeof obj !== 'object') return m;
+    Object.keys(obj).forEach((id) => {
+      const v = obj[id];
+      if (!v || typeof v !== 'object') return;
+      if (v.deleted) { m.set(id, { deleted: true, updatedAt: Number(v.updatedAt) || 0 }); return; }
+      if (!isDateKey(v.date)) return;
+      const time = isTimeKey(v.time) ? v.time : '12:00';
+      m.set(id, {
+        date: v.date,
+        time,
+        mood: MOODS.includes(v.mood) ? v.mood : '',
+        memo: typeof v.memo === 'string' ? v.memo.slice(0, 60) : '',
+        by: v.by === 'wife' || v.by === 'husband' ? v.by : null,
+        updatedAt: Number(v.updatedAt) || legacyStamp(v.date, time),
+      });
+    });
+    return m;
+  }
+
+  function sameRec(a, b) {
+    if (!!a.deleted !== !!b.deleted) return false;
+    if (a.deleted) return true;
+    return a.date === b.date && a.time === b.time && (a.mood || '') === (b.mood || '')
+      && (a.memo || '') === (b.memo || '') && (a.by || null) === (b.by || null);
+  }
+
+  function reconcileMeta() {
+    if (!net.mirror || typeof net.mirror !== 'object') return false;
+    const first = !net.joined;
+    let changed = false;
+
+    // 함께한 첫날
+    const rs = net.mirror.startDate;
+    const rv = rs && typeof rs === 'object' && isDateKey(rs.value) ? rs.value : '';
+    const ru = rs && typeof rs === 'object' ? (Number(rs.updatedAt) || 0) : 0;
+    const lv = state.settings.startDate || '';
+    const lu = Number(state.settings.startUpdatedAt) || 0;
+    if (rs && (ru > lu || (first && rv && !touched.startDate && lv !== rv))) {
+      if (lv !== rv) { state.settings.startDate = rv; changed = true; }
+      state.settings.startUpdatedAt = ru;
+    } else if (lv && (!rs || lv !== rv)) {
+      if (!lu) state.settings.startUpdatedAt = Date.now();
+      net.dirty.add(META_START);
+      saveDirty();
+    }
+
+    // 오늘의 사랑 표현 (같은 미션 · 같은 완료 상태)
+    const rm = net.mirror.mission;
+    if (rm && typeof rm === 'object' && isDateKey(rm.date)) {
+      const rmu = Number(rm.updatedAt) || 0;
+      const lmu = Number(state.mission.updatedAt) || 0;
+      const same = state.mission.date === rm.date
+        && state.mission.idx === rm.idx
+        && (state.mission.done === true) === (rm.done === true);
+      if (first && rm.date === todayKey() && !touched.mission && !same) {
+        applyRemoteMission(rm, rmu);
+        changed = true;
+      } else if (rmu > lmu && !same) {
+        applyRemoteMission(rm, rmu);
+        changed = true;
+      } else if (lmu > rmu && !same) {
+        net.dirty.add(META_MISSION);
+        saveDirty();
+      }
+    } else if (state.mission.date) {
+      net.dirty.add(META_MISSION);
+      saveDirty();
+    }
+
+    return changed;
+  }
+
+  function applyRemoteMission(rm, rmu) {
+    const idx = Number(rm.idx);
+    state.mission = {
+      date: rm.date,
+      idx: Number.isInteger(idx) && idx >= 0 && idx < MISSIONS.length ? idx : 0,
+      done: rm.done === true,
+      updatedAt: rmu,
+    };
+  }
+
+  function reconcile() {
+    if (!net.mirror || typeof net.mirror !== 'object') return;
+    const rem = remoteRecords(net.mirror.records);
+    const loc = localRecords();
+    const before = state.records.length;
+    const push = [];
+    let changed = false;
+
+    rem.forEach((r, id) => {
+      const l = loc.get(id);
+      if (!l || r.updatedAt > l.updatedAt) { applyRemote(id, r); loc.set(id, r); changed = true; }
+      else if (l.updatedAt > r.updatedAt) push.push(id);
+      else if (!sameRec(l, r)) { applyRemote(id, r); loc.set(id, r); changed = true; }
+    });
+    loc.forEach((l, id) => {
+      if (!rem.has(id)) push.push(id);
+    });
+
+    const metaChanged = reconcileMeta();
+
+    if (changed || metaChanged) {
+      sortRecords(state.records);
+      save();
+      renderAll();
+    }
+    if (push.length) {
+      push.forEach((id) => { net.dirty.add(id); });
+      saveDirty();
+      flush();
+    }
+
+    // 부부 방에 처음 들어갈 때: 기존 기록이 사라지지 않고 합쳐졌다는 안내
+    if (!net.joined) {
+      net.joined = true;
+      if (rem.size === 0 && push.length) showToast(`내 하트 ${push.length}개를 부부 방에 올렸어요`);
+      else if (push.length) showToast(`부부 방 기록과 합쳐서 ${state.records.length}개가 됐어요`);
+      else if (state.records.length > before) showToast(`부부 방 하트 ${state.records.length - before}개를 받았어요`);
+    }
+    flush();
+  }
+
+  function applyRemote(id, v) {
+    const i = state.records.findIndex((r) => r.id === id);
+    if (v.deleted) {
+      if (i >= 0) state.records.splice(i, 1);
+      state.tomb[id] = Math.max(state.tomb[id] || 0, v.updatedAt || 0);
+      return;
+    }
+    const rec = {
+      id,
+      date: v.date,
+      time: v.time,
+      mood: v.mood || '',
+      memo: v.memo || '',
+      by: v.by || null,
+      updatedAt: v.updatedAt || Date.now(),
+    };
+    if (i >= 0) state.records[i] = rec;
+    else state.records.push(rec);
+    if (state.tomb[id]) delete state.tomb[id];
+  }
+
+  /* ── 올리기 ── */
+  function markDirty(id) {
+    if (!id || !share.url) return;
+    net.dirty.add(id);
+    saveDirty();
+    clearTimeout(flushTimer);
+    flushTimer = setTimeout(flush, 150);
+  }
+
+  function flush() {
+    if (net.flushing) return;
+    if (!shared()) return;
+    if (!net.joined) return;   // 방의 첫 스냅숏을 받은 뒤에 올린다 (처음엔 서버가 기준)
+    if (navigator.onLine === false) { setMode('offline'); return; }
+    if (net.dirty.size === 0) return;
+
+    net.flushing = true;
+    const ids = Array.from(net.dirty);
+
+    const step = (k) => {
+      if (k >= ids.length) {
+        net.flushing = false;
+        if (net.dirty.size) setTimeout(flush, 600);
+        return;
+      }
+      const id = ids[k];
+      let url = '';
+      let body = null;
+
+      if (id === META_START) {
+        if (!state.settings.startDate && !state.settings.startUpdatedAt) {
+          net.dirty.delete(id); saveDirty(); step(k + 1); return;
+        }
+        url = metaUrl('startDate');
+        body = { value: state.settings.startDate || '', updatedAt: state.settings.startUpdatedAt || Date.now() };
+      } else if (id === META_MISSION) {
+        if (!state.mission.date) {
+          net.dirty.delete(id); saveDirty(); step(k + 1); return;
+        }
+        url = metaUrl('mission');
+        body = {
+          date: state.mission.date,
+          idx: state.mission.idx,
+          done: state.mission.done === true,
+          updatedAt: state.mission.updatedAt || Date.now(),
+        };
+      } else {
+        const rec = state.records.find((r) => r.id === id);
+        if (rec) {
+          url = recordUrl(id);
+          body = {
+            date: rec.date, time: rec.time, mood: rec.mood || '', memo: rec.memo || '',
+            by: rec.by || null, updatedAt: rec.updatedAt || Date.now(),
+          };
+        } else if (state.tomb[id]) {
+          url = recordUrl(id);
+          body = { deleted: true, updatedAt: state.tomb[id] };
+        } else {
+          net.dirty.delete(id); saveDirty(); step(k + 1); return;
+        }
+      }
+
+      fbRequest('PUT', url, body).then(() => {
+        net.dirty.delete(id);
+        saveDirty();
+        step(k + 1);
+      }).catch(() => {
+        net.flushing = false;
+        if (navigator.onLine === false) setMode('offline');
+      });
+    };
+    step(0);
+  }
+
+  /** 오래된 삭제 표시는 서버에서도 정리 */
+  function pruneTombstones() {
+    if (!shared()) return;
+    const now = Date.now();
+    Object.keys(state.tomb).forEach((id) => {
+      if (now - state.tomb[id] < TOMB_KEEP_MS) return;
+      delete state.tomb[id];
+      if (net.mirror && net.mirror.records) delete net.mirror.records[id];
+      fbRequest('DELETE', recordUrl(id)).catch(() => { /* 다음 기회에 */ });
+    });
+    save();
+  }
+
+  /* ── 공유 시트 ── */
+  function openShareSheet() {
+    $('roomInput').value = share.room;
+    $('dbInput').value = share.url || normDb(DEFAULT_FIREBASE_URL);
+    $('advBox').open = !!share.url && share.url !== normDb(DEFAULT_FIREBASE_URL);
+    $('advHint').textContent = share.url && share.url !== normDb(DEFAULT_FIREBASE_URL) ? '(직접 설정함)' : '(기본 주소 사용 중)';
+    $('shareNote').textContent = share.room
+      ? '방 코드를 바꾸면 다른 부부 방으로 옮겨가요. 기록은 그대로 남아요.'
+      : '방 코드를 아는 두 사람만 기록을 함께 볼 수 있어요. PIN 잠금은 기기마다 따로예요.';
+    renderShare();
+    openSheet($('shareSheet'), $('roomInput'));
+  }
+
+  function closeShareSheet() {
+    closeSheet($('shareSheet'));
+  }
+
+  function randomRoom() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let out = '';
+    for (let i = 0; i < 6; i += 1) out += chars[Math.floor(Math.random() * chars.length)];
+    return out;
+  }
+
+  function saveShareFromSheet() {
+    const url = normDb($('dbInput').value || DEFAULT_FIREBASE_URL);
+    const room = normRoom($('roomInput').value);
+
+    if (!url) { $('advBox').open = true; $('dbInput').focus(); showToast('연결 주소가 없어요'); return; }
+    if (!/^https?:\/\/[^\s/]+\.[^\s/]+/i.test(url)) { $('advBox').open = true; showToast('주소 형식을 확인해 주세요'); return; }
+    if (!roomValid(room)) {
+      showToast('방 코드는 2~12자로 정해 주세요');
+      $('roomInput').value = room;
+      $('roomInput').focus();
+      return;
+    }
+
+    const changed = url !== share.url || room !== share.room;
+    share.url = url;
+    share.room = room;
+    persistShare();
+    closeShareSheet();
+    connectShare({ announce: changed });
+  }
+
+  function leaveShare() {
+    const ok = window.confirm('부부 공유를 끄고 이 기기에만 저장할까요?\n이 기기의 기록은 그대로 남아요.');
+    if (!ok) return;
+    share.room = '';
+    persistShare();
+    closeStream();
+    stopPolling();
+    net.mirror = null;
+    net.dirty.clear();
+    saveDirty();
+    setMode('local');
+    closeShareSheet();
+    showToast('부부 공유를 껐어요 · 이 기기에만 저장해요');
+  }
+
+  function copyInviteLink() {
+    if (!roomReady()) return;
+    const link = inviteLink();
+    const text = `💗 하트노트 부부 방 「${share.room}」\n아래 링크를 열면 바로 연결돼요.\n${link}`;
+    const done = () => showToast('초대 링크를 복사했어요');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => showToast(`링크: ${link}`, '', null, 6500));
+    } else {
+      showToast(`링크: ${link}`, '', null, 6500);
+    }
+  }
 
   /* ───────── 통계 ───────── */
   function computeStats() {
@@ -252,6 +967,7 @@
             <span class="rec-date">${fmtDate(r.date)}</span>
             <span class="rec-time">${fmtTime(r.time)}</span>
             ${r.mood ? `<span class="rec-mood">${MOOD_EMOJI[r.mood]} ${r.mood}</span>` : ''}
+            ${r.by ? `<span class="rec-by">${byLabel(r.by)}</span>` : ''}
           </span>
           ${r.memo ? `<span class="rec-memo">${escapeHtml(r.memo)}</span>` : ''}
         </span>
@@ -389,6 +1105,7 @@
     renderCalendar();
     renderSettings();
     refreshDaySheet();
+    renderShare();
   }
 
   /* ───────── 화면 전환 ───────── */
@@ -482,10 +1199,13 @@
       time: data.time || nowTime(),
       mood: data.mood || '',
       memo: (data.memo || '').trim().slice(0, 60),
+      by: data.by || null,
+      updatedAt: Date.now(),
     };
     state.records.unshift(rec);
     sortRecords(state.records);
     save();
+    markDirty(rec.id);
     renderAll();
     if (onDone) onDone(rec);
     return rec;
@@ -495,14 +1215,19 @@
     const idx = state.records.findIndex((r) => r.id === id);
     if (idx < 0) return;
     lastDeleted = state.records.splice(idx, 1)[0];
+    state.tomb[id] = Date.now();
     save();
+    markDirty(id);
     renderAll();
     showToast('기록을 지웠어요', '되돌리기', () => {
       if (!lastDeleted) return;
+      lastDeleted.updatedAt = Date.now();
       state.records.push(lastDeleted);
+      delete state.tomb[lastDeleted.id];
       lastDeleted = null;
       sortRecords(state.records);
       save();
+      markDirty(id);
       renderAll();
       showToast('되돌렸어요');
     }, 5200);
@@ -529,8 +1254,10 @@
       const rec = state.records.find((r) => r.id === sheetRecordId);
       if (rec) {
         rec.date = date; rec.time = time; rec.mood = draftMood; rec.memo = memo.trim().slice(0, 60);
+        rec.updatedAt = Date.now();
         sortRecords(state.records);
         save();
+        markDirty(rec.id);
         renderAll();
       }
       closeSheet($('recordSheet'));
@@ -580,7 +1307,7 @@
 
   $('heartBtn').addEventListener('click', () => {
     popHeart();
-    const rec = addRecord({ date: todayKey(), time: nowTime() });
+    const rec = addRecord({ date: todayKey(), time: nowTime(), by: who });
     showToast('오늘의 하트를 남겼어요', '메모 남기기', () => openRecordSheet(rec), 5000);
   });
 
@@ -588,8 +1315,9 @@
   function ensureMission() {
     const t = todayKey();
     if (state.mission.date !== t) {
-      state.mission = { date: t, idx: Math.floor(Math.random() * MISSIONS.length), done: false };
+      state.mission = { date: t, idx: Math.floor(Math.random() * MISSIONS.length), done: false, updatedAt: Date.now() };
       save();
+      markDirty(META_MISSION);
     }
   }
 
@@ -600,13 +1328,19 @@
     state.mission.idx = next;
     state.mission.done = false;
     state.mission.date = todayKey();
+    state.mission.updatedAt = Date.now();
+    touched.mission = true;
     save();
+    markDirty(META_MISSION);
     renderMission();
   });
 
   $('missionDone').addEventListener('click', () => {
     state.mission.done = !state.mission.done;
+    state.mission.updatedAt = Date.now();
+    touched.mission = true;
     save();
+    markDirty(META_MISSION);
     renderMission();
     if (state.mission.done) showToast('오늘의 사랑 표현, 멋져요 💗');
   });
@@ -719,14 +1453,23 @@
       const ok = window.confirm(`지금 기록 ${state.records.length}개를 백업 파일의 ${cleaned.length}개로 바꿀까요?`);
       if (!ok) return false;
     }
+    const keep = new Set(cleaned.map((r) => r.id));
+    const stamp = Date.now();
+    const gone = [];
+    state.records.forEach((r) => { if (!keep.has(r.id)) { state.tomb[r.id] = stamp; gone.push(r.id); } });
     state.records = cleaned;
+    cleaned.forEach((r) => { r.updatedAt = stamp; });
     if (parsed && parsed.settings && isDateKey(parsed.settings.startDate)) {
       state.settings.startDate = parsed.settings.startDate;
+      state.settings.startUpdatedAt = stamp;
     }
     // 백업에는 PIN이 담기지 않으므로 복원 후 잠금은 꺼 둔다 (PIN 분실 복구 경로)
     state.settings.pinOn = false;
     state.settings.pin = '';
     save();
+    cleaned.forEach((r) => markDirty(r.id));
+    gone.forEach((id) => markDirty(id));
+    if (state.settings.startUpdatedAt) markDirty(META_START);
     unlock();
     closeSheet($('forgotSheet'));
     renderAll();
@@ -754,9 +1497,15 @@
     if (!state.records.length) { showToast('지울 기록이 없어요'); return; }
     const ok = window.confirm(`기록 ${state.records.length}개를 모두 지울까요? 되돌릴 수 없어요.`);
     if (!ok) return;
+    const now = Date.now();
+    const ids = state.records.map((r) => r.id);
+    ids.forEach((id) => { state.tomb[id] = now; });
     state.records = [];
     state.mission.done = false;
+    state.mission.updatedAt = now;
     save();
+    ids.forEach((id) => markDirty(id));
+    markDirty(META_MISSION);
     renderAll();
     showToast('모든 기록을 지웠어요');
   });
@@ -766,7 +1515,10 @@
     const v = $('startDate').value;
     if (v && v > todayKey()) { showToast('오늘 이전 날짜로 정해 주세요'); $('startDate').value = state.settings.startDate || ''; return; }
     state.settings.startDate = v || '';
+    state.settings.startUpdatedAt = Date.now();
+    touched.startDate = true;
     save();
+    markDirty(META_START);
     renderSettings();
     renderHome();
     if (v) showToast('함께한 날을 세어 드릴게요');
@@ -774,8 +1526,11 @@
 
   $('startClear').addEventListener('click', () => {
     state.settings.startDate = '';
+    state.settings.startUpdatedAt = Date.now();
+    touched.startDate = true;
     $('startDate').value = '';
     save();
+    markDirty(META_START);
     renderSettings();
     renderHome();
     showToast('시작일을 지웠어요');
@@ -948,6 +1703,48 @@
 
   $('lockNow').addEventListener('click', () => { lock(); });
 
+  /* ───────── 기록자 · 부부 공유 ───────── */
+  $('whoWife').addEventListener('click', () => { if (who !== 'wife') setWho('wife', { toast: true }); });
+  $('whoHusband').addEventListener('click', () => { if (who !== 'husband') setWho('husband', { toast: true }); });
+
+  $('sharePill').addEventListener('click', openShareSheet);
+  $('shareCancel').addEventListener('click', closeShareSheet);
+  $('shareSave').addEventListener('click', saveShareFromSheet);
+  $('roomNew').addEventListener('click', () => {
+    $('roomInput').value = randomRoom();
+    showToast('새 부부 방 코드를 만들었어요');
+  });
+  $('roomInput').addEventListener('blur', () => {
+    const v = normRoom($('roomInput').value);
+    if (v !== $('roomInput').value) $('roomInput').value = v;
+  });
+  $('roomInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveShareFromSheet(); });
+  $('shareSend').addEventListener('click', copyInviteLink);
+  $('shareLeave').addEventListener('click', leaveShare);
+
+  window.addEventListener('online', () => {
+    if (!shared()) return;
+    setMode('connecting');
+    openStream();
+    flush();
+  });
+  window.addEventListener('offline', () => {
+    if (!shared()) return;
+    setMode('offline');
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (!shared()) return;
+    const stale = !net.lastEvent || Date.now() - net.lastEvent > 60000;
+    if (net.mode === 'error' || net.mode === 'offline'
+      || (net.mode === 'connecting' && !net.es && !net.pollTimer)
+      || (net.mode === 'live' && stale)) {
+      connectShare({ announce: false });
+    } else {
+      flush();
+    }
+  });
+
   /* ───────── 기타 ───────── */
   $('goCalendar').addEventListener('click', () => setView('calendar'));
 
@@ -992,12 +1789,19 @@
   /* ───────── PWA ───────── */
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch(() => {});
+      // sw.js 자체를 HTTP 캐시에서 읽지 않게 해서, 새 버전이 바로 적용되도록 한다
+      navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+        .then((reg) => reg.update().catch(() => {}))
+        .catch(() => {});
     });
   }
 
   /* ───────── 시작 ───────── */
+  loadShare();
+  setWho(who);
+  pruneTombstones();
   renderAll();
+  if (shared()) connectShare({ announce: false });
   if (state.settings.pinOn && state.settings.pin) lock();
   else document.body.classList.remove('modal-open');
 })();

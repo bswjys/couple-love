@@ -14,7 +14,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="하트노트">
-<link rel="stylesheet" href="./styles.css?v=1">
+<link rel="stylesheet" href="./styles.css?v=2">
 </head>
 <body>
 
@@ -59,6 +59,23 @@
       <span class="date-chip" id="headDate">11월 25일 수요일</span>
     </div>
     <p class="head-sub" id="headSub">오늘도 사랑을 남겨 볼까요?</p>
+
+    <!-- 기록자 선택 · 부부 공유 상태 -->
+    <div class="who-row">
+      <div class="who" role="group" aria-label="누가 기록하나요">
+        <button class="who-btn" id="whoWife" type="button" data-who="wife" aria-pressed="true" aria-label="아내로 기록하기">
+          <span class="who-emoji" aria-hidden="true">👩</span> 아내
+        </button>
+        <button class="who-btn" id="whoHusband" type="button" data-who="husband" aria-pressed="false" aria-label="남편으로 기록하기">
+          <span class="who-emoji" aria-hidden="true">👨</span> 남편
+        </button>
+      </div>
+      <button class="share-pill" id="sharePill" type="button" data-mode="local" aria-label="부부 공유 켜기 · 부부 공유 설정 열기">
+        <span class="dot dot-local" id="shareDot" aria-hidden="true"></span>
+        <span class="share-label" id="shareLabel">부부 공유 켜기</span>
+        <span class="share-room" id="shareRoom" hidden></span>
+      </button>
+    </div>
   </header>
 
   <main class="main">
@@ -124,7 +141,7 @@
         <div class="recent-list" id="recentList"></div>
       </section>
 
-      <p class="foot-note">기록은 이 기기 브라우저에만 저장돼요 · 설정에서 백업할 수 있어요</p>
+      <p class="foot-note" id="homeFootNote">기록은 이 기기 브라우저에만 저장돼요 · 부부 공유를 켜면 둘이 함께 봐요</p>
     </section>
 
     <!-- ══ 통계 ══ -->
@@ -260,11 +277,12 @@
 
       <section class="card set-card privacy" aria-labelledby="privacyTitle">
         <h2 class="card-title" id="privacyTitle">사생활 보호</h2>
-        <p>기록은 서버로 보내지 않고 이 기기 브라우저(localStorage)에만 저장해요. PIN은 기기 안에만 보관되고 백업 파일에는 담기지 않아요.</p>
+        <p>부부 공유를 켜면 하트 기록·함께한 첫날·오늘의 사랑 표현이 두 사람 폰에 함께 저장돼요. 끈 상태에서는 이 기기 브라우저(localStorage)에만 저장합니다.</p>
+        <p>PIN은 기기마다 따로 보관되고 서버로 보내지 않아요. 백업 파일에도 담기지 않아요.</p>
         <p>PIN을 잊었다면 백업 파일을 복원하면 잠금이 풀려요(복원한 뒤 PIN을 다시 켜 주세요).</p>
       </section>
 
-      <p class="foot-note" id="versionNote">하트노트 v1 · 부부 사랑 기록</p>
+      <p class="foot-note" id="versionNote">하트노트 v2 · 부부 사랑 기록</p>
     </section>
 
   </main>
@@ -376,6 +394,50 @@
   </div>
 </div>
 
+<!-- ───────── 부부 공유 시트 ───────── -->
+<div class="sheet-backdrop" id="shareSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+    <div class="grip" aria-hidden="true"></div>
+    <h3 id="shareTitle">💑 부부 실시간 공유</h3>
+    <p class="sheet-desc">같은 <b>부부 방 코드</b>를 두 폰에 넣으면, 한쪽에서 하트를 남기면 다른 폰에도 1~2초 안에 나타나요.</p>
+
+    <div class="share-status" id="shareStatus" data-mode="local">
+      <span class="dot dot-local" id="shareStatusDot" aria-hidden="true"></span>
+      <span id="shareStatusText">부부 공유 꺼짐 · 이 기기에만 저장돼요</span>
+    </div>
+
+    <label class="field">
+      <span>부부 방 코드 <small>2~12자 · 한글도 돼요</small></span>
+      <div class="code-row">
+        <input type="text" id="roomInput" maxlength="12" inputmode="text" autocomplete="off"
+               autocapitalize="characters" spellcheck="false" placeholder="예: 우리둘">
+        <button type="button" class="mini-wide" id="roomNew">새 코드</button>
+      </div>
+    </label>
+
+    <details class="adv" id="advBox">
+      <summary>연결 주소 <small id="advHint">(기본 주소 사용 중)</small></summary>
+      <label class="field">
+        <span>databaseURL</span>
+        <input type="url" id="dbInput" autocomplete="off" spellcheck="false"
+               placeholder="https://내프로젝트-default-rtdb.firebaseio.com">
+      </label>
+      <p class="adv-note">수유 앱과 같은 Firebase 주소를 써요. 직접 만든 Realtime Database 주소가 있으면 여기에 넣어도 돼요.</p>
+    </details>
+
+    <p class="sheet-note" id="shareNote">방 코드를 아는 두 사람만 기록을 함께 볼 수 있어요. PIN 잠금은 기기마다 따로예요.</p>
+    <div class="share-extra">
+      <button type="button" class="ghost-mini" id="shareSend" hidden>🔗 초대 링크 복사</button>
+      <button type="button" class="ghost-mini" id="shareLeave" hidden>공유 끄기</button>
+    </div>
+
+    <div class="sheet-actions">
+      <button type="button" id="shareCancel">닫기</button>
+      <button type="button" class="primary" id="shareSave">부부 공유 켜기</button>
+    </div>
+  </div>
+</div>
+
 <input type="file" id="fileInput" accept="application/json,.json" hidden>
 
 <div class="toast" id="toast" role="status" aria-live="polite">
@@ -385,6 +447,6 @@
 
 <noscript><p style="padding:24px;text-align:center">하트노트는 자바스크립트가 필요해요.</p></noscript>
 
-<script src="./app.js?v=1"></script>
+<script src="./app.js?v=2"></script>
 </body>
 </html>

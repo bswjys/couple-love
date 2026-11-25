@@ -5,7 +5,7 @@
 
 - 주소: <https://bswjys.github.io/couple-love/>
 - 아이폰 사파리에서 열고 **공유 → 홈 화면에 추가** 하면 앱처럼 쓸 수 있어요.
-- 기록은 서버로 보내지 않고 **이 기기 브라우저(localStorage)에만** 저장됩니다.
+- 혼자 쓸 때는 **이 기기 브라우저(localStorage)에만** 저장되고, **부부 공유**를 켜면 두 사람 폰에 함께 저장됩니다.
 
 ## 기능
 
@@ -36,6 +36,15 @@
 - 가정사역 맥락에 맞춘 가벼운 미션 20종 중 하루 하나가 랜덤으로 나옵니다.
 - **다른 미션**으로 바꾸고, **오늘 했어요**로 체크할 수 있어요.
 
+### 부부 실시간 공유 (v2)
+- 상단에서 **👩 아내 / 👨 남편** 중 누가 기록하는지 고를 수 있고, 남긴 하트에 기록자가 부드럽게 표시됩니다.
+- **부부 공유 켜기** → **부부 방 코드**(2~12자, 한글 가능)를 넣으면 두 폰이 실시간으로 이어집니다. 연결되면 버튼이 **● 부부 공유 중**과 방 코드 칩으로 바뀝니다.
+- **초대 링크 복사**로 보낸 `?room=` 링크를 열면 코드 입력 없이 바로 연결됩니다.
+- 함께 맞춰지는 것: **하트 기록**(추가·수정·삭제) · **함께한 첫날** · **오늘의 사랑 표현**(같은 미션·완료 표시).
+- 한쪽에서 하트를 남기면 다른 폰에 1~2초 안에 나타나고, 인터넷이 끊기면 이 기기에 먼저 저장한 뒤 다시 연결되면 자동으로 맞춰집니다(Firebase 실시간 스트림 + 5초 폴링).
+- **PIN 잠금은 기기마다 따로**입니다. 서버에 올라가지 않고 상대 폰에도 생기지 않습니다.
+- 두 기기 기록은 `updatedAt` 기준으로 합쳐지고, 지운 기록은 90일 뒤 서버에서도 정리됩니다.
+
 ### 선택형 PIN 잠금
 - 기본은 꺼져 있고, 설정에서 4자리 PIN을 켜면 앱을 열 때 키패드가 먼저 뜹니다.
 - 켜기: 설정 → PIN 잠금 → 새 PIN 두 번 입력 / 끄기: 현재 PIN 입력 / **PIN 번호 변경**은 현재 PIN 확인 후 새 PIN 두 번.
@@ -56,22 +65,49 @@
 ```
 index.html            화면 구조
 styles.css            토스풍 화이트 + 핑크 디자인
-app.js                기록·통계·달력·PIN·백업 로직
+app.js                기록·통계·달력·PIN·백업·부부 공유 로직
 manifest.webmanifest  PWA 설정
-sw.js                 오프라인 캐시 (v1)
+sw.js                 오프라인 캐시 (v2)
 icon.svg / icon-*.png 아이콘 (make_icons.py 로 생성)
+.dev/                 Playwright 검증 · 가짜 Firebase 서버
 ```
+
+## 부부 공유 데이터 (Firebase Realtime Database)
+
+- 주소: `https://baby-feeding-9f820-default-rtdb.asia-southeast1.firebasedatabase.app` (수유 앱과 같은 프로젝트, 기본값)
+- 경로: `/couple_rooms/{방 코드}` — 수유 앱의 `/rooms/{방}` 과 섮이지 않습니다.
+
+```json
+{
+  "couple_rooms": {
+    "우리집": {
+      "records": {
+        "r1": { "date": "2026-11-25", "time": "21:30", "mood": "행복", "memo": "", "by": "wife", "updatedAt": 1764070200000 }
+      },
+      "startDate": { "value": "2014-05-10", "updatedAt": 1764070200000 },
+      "mission": { "date": "2026-11-25", "idx": 5, "done": true, "updatedAt": 1764070200000 }
+    }
+  }
+}
+```
+
+- PIN 은 이 구조에 없습니다(기기 localStorage 전용).
+- Firebase 규칙이 테스트 모드(2026-12-24 만료)라면 그 전에 `rooms`·`couple_rooms` 둘 다 열어 주거나 익명 인증으로 보호해야 합니다.
 
 ## 개발 · 검증
 
 ```bash
 python3 -m http.server 8770 --bind 127.0.0.1   # 로컬에서 열기
+bash .dev/run-tests.sh                         # 전체 검증 (기본 기록 + 부부 공유)
 LD_LIBRARY_PATH=/workspace/tmp/libroot/usr/lib/x86_64-linux-gnu \
-  python3 .dev/test_app.py                     # Playwright 검증 + 스크린샷
+  python3 .dev/test_app.py                     # 기본 기능만
+LD_LIBRARY_PATH=/workspace/tmp/libroot/usr/lib/x86_64-linux-gnu \
+  python3 .dev/test_share.py                   # 부부 공유 (가짜 Firebase 8775)
 python3 make_icons.py                          # 아이콘 다시 만들기
 ```
 
 - 390px 아이폰 화면과 데스크톱(1280px)에서 콘솔 오류 0, 가로 넘침 0을 확인합니다.
+- 검증 스크립트는 `.dev/mock-firebase.py`(REST + SSE)를 띄워 두 기기 동기화를 실제로 검사합니다.
 - 검증 스크린샷은 `downloads/couple_love/` 에 저장됩니다.
 
 ## 데이터 형식 (백업 파일)
