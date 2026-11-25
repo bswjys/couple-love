@@ -269,6 +269,21 @@ def main():
         B.click('.tab[data-view="settings"]')
         B.wait_for_timeout(300)
         check('D1b 시작일 입력값', B.input_value('#startDate') == '2014-05-10', B.input_value('#startDate'))
+
+        # 통계 기준 시작일(기본 2026-11-01)도 두 사람 폰에 함께
+        A.fill('#statsStartDate', '2010-01-01')
+        A.wait_for_timeout(300)
+        try:
+            B.wait_for_function("() => JSON.parse(localStorage.getItem('heartnote.v1')).settings.statsStartDate === '2010-01-01'", timeout=8000)
+            check('D1c 통계 기준일 동기화', True)
+        except Exception as e:  # noqa: BLE001
+            check('D1c 통계 기준일 동기화', False, str(e)[:120])
+        B.click('.tab[data-view="settings"]')
+        B.wait_for_timeout(300)
+        check('D1d 통계 기준일 입력값', B.input_value('#statsStartDate') == '2010-01-01', B.input_value('#statsStartDate'))
+        B.click('.tab[data-view="stats"]')
+        B.wait_for_timeout(300)
+        check('D1e B 통계 기준 안내', B.inner_text('#statsBase') == '통계 기준: 2010.01.01 ~', B.inner_text('#statsBase'))
         B.click('.tab[data-view="home"]')
         B.wait_for_timeout(300)
         check('D2 함께한 지 표시', B.is_visible('#loveLine') and B.inner_text('#loveDays') == f'{start_days()}일', B.inner_text('#loveDays'))
@@ -365,9 +380,9 @@ def main():
         H.goto(APP)
         H.wait_for_timeout(1500)
         html = H.content()
-        check('H1 에셋 v=2', 'styles.css?v=2' in html and 'app.js?v=2' in html)
+        check('H1 에셋 v=3', 'styles.css?v=3' in html and 'app.js?v=3' in html)
         sw = H.evaluate("() => fetch('./sw.js').then(r => r.text())")
-        check('H2 서비스워커 v2', 'couple-love-v2' in sw)
+        check('H2 서비스워커 v3', 'couple-love-v3' in sw)
         reg = H.evaluate("() => navigator.serviceWorker.getRegistration().then(r => !!r)")
         check('H3 서비스워커 등록', reg is True, reg)
         H.close()

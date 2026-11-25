@@ -1,9 +1,9 @@
-/* 하트노트 · 오프라인 캐시 (v2)
+/* 하트노트 · 오프라인 캐시 (v3)
  *  - HTML·코드: 네트워크 우선 → 오프라인일 때만 캐시 (새 HTML + 옛 JS 섞임 방지)
  *  - 아이콘·manifest: 캐시 우선
  */
-const CACHE = 'couple-love-v2';
-const VERSION = '2';
+const CACHE = 'couple-love-v3';
+const VERSION = '3';
 const ASSETS = [
   './',
   './index.html',

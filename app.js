@@ -19,6 +19,8 @@
 
   const MOODS = ['설렘', '포근', '행복', '고마움'];
   const MOOD_EMOJI = { 설렘: '💓', 포근: '🧸', 행복: '😊', 고마움: '🙏' };
+  // 통계 기준 시작일 기본값 — 이 날 이전 기록은 통계에서 빼고, 경과 일수도 이 날부터 센다.
+  const DEFAULT_STATS_START = '2026-11-01';
   const WINDOWS = [
     { key: 'month', label: '월 평균', range: '최근 30일', days: 30 },
     { key: 'quarter', label: '분기 평균', range: '최근 90일', days: 90 },
@@ -97,7 +99,10 @@
     version: 1,
     records: [],
     tomb: {},
-    settings: { pinOn: false, pin: '', startDate: '', startUpdatedAt: 0 },
+    settings: {
+      pinOn: false, pin: '', startDate: '', startUpdatedAt: 0,
+      statsStartDate: DEFAULT_STATS_START, statsStartUpdatedAt: 0,
+    },
     mission: { date: '', idx: 0, done: false, updatedAt: 0 },
   });
 
@@ -139,6 +144,11 @@
         s.settings.pin = typeof parsed.settings.pin === 'string' && /^\d{4}$/.test(parsed.settings.pin) ? parsed.settings.pin : '';
         s.settings.startDate = isDateKey(parsed.settings.startDate) ? parsed.settings.startDate : '';
         s.settings.startUpdatedAt = Number(parsed.settings.startUpdatedAt) || 0;
+        // 저장된 값이 있으면 그대로(빈 값 = 전체 기록), 없으면 기본값 2026-11-01
+        if (typeof parsed.settings.statsStartDate === 'string') {
+          s.settings.statsStartDate = isDateKey(parsed.settings.statsStartDate) ? parsed.settings.statsStartDate : '';
+        }
+        s.settings.statsStartUpdatedAt = Number(parsed.settings.statsStartUpdatedAt) || 0;
         if (!s.settings.pin) s.settings.pinOn = false;
       }
       if (parsed.mission && typeof parsed.mission === 'object') {
@@ -218,9 +228,10 @@
   };
   let flushTimer = null;
   const META_START = 'meta:startDate';
+  const META_STATS_START = 'meta:statsStartDate';
   const META_MISSION = 'meta:mission';
   // 이번 실행에서 사용자가 직접 바꾼 항목 (방에 처음 들어갈 때 서버 값을 그대로 따를지 판단)
-  const touched = { startDate: false, mission: false };
+  const touched = { startDate: false, statsStart: false, mission: false };
 
   function normDb(u) {
     let s = String(u || '').trim();
@@ -604,6 +615,21 @@
       saveDirty();
     }
 
+    // 통계 기준 시작일 (기본 2026-11-01 · 방에는 statsStartDate 로 저장)
+    const ss = net.mirror.statsStartDate;
+    const ssv = ss && typeof ss === 'object' && isDateKey(ss.value) ? ss.value : '';
+    const ssu = ss && typeof ss === 'object' ? (Number(ss.updatedAt) || 0) : 0;
+    const slv = state.settings.statsStartDate || '';
+    const slu = Number(state.settings.statsStartUpdatedAt) || 0;
+    if (ss && (ssu > slu || (first && !touched.statsStart && slv !== ssv))) {
+      if (slv !== ssv) { state.settings.statsStartDate = ssv; changed = true; }
+      state.settings.statsStartUpdatedAt = ssu;
+    } else if (!ss || slv !== ssv) {
+      state.settings.statsStartUpdatedAt = Date.now();
+      net.dirty.add(META_STATS_START);
+      saveDirty();
+    }
+
     // 오늘의 사랑 표현 (같은 미션 · 같은 완료 상태)
     const rm = net.mirror.mission;
     if (rm && typeof rm === 'object' && isDateKey(rm.date)) {
@@ -737,6 +763,12 @@
         }
         url = metaUrl('startDate');
         body = { value: state.settings.startDate || '', updatedAt: state.settings.startUpdatedAt || Date.now() };
+      } else if (id === META_STATS_START) {
+        if (!state.settings.statsStartDate && !state.settings.statsStartUpdatedAt) {
+          net.dirty.delete(id); saveDirty(); step(k + 1); return;
+        }
+        url = metaUrl('statsStartDate');
+        body = { value: state.settings.statsStartDate || '', updatedAt: state.settings.statsStartUpdatedAt || Date.now() };
       } else if (id === META_MISSION) {
         if (!state.mission.date) {
           net.dirty.delete(id); saveDirty(); step(k + 1); return;
@@ -861,12 +893,24 @@
     }
   }
 
-  /* ───────── 통계 ───────── */
+  /* ───────── 통계 ──────── */
+  /** 통계 기준 시작일(오늘보다 미래면 오늘로). 없으면 null = 전체 기록 */
+  function statsFloor(today) {
+    if (!isDateKey(state.settings.statsStartDate)) return null;
+    const d = parseKey(state.settings.statsStartDate);
+    return d > today ? today : d;
+  }
+
+  function fmtDot(k) {
+    return isDateKey(k) ? k.replace(/-/g, '.') : '';
+  }
+
   function computeStats() {
     const today = startOfDay();
+    const floor = statsFloor(today);
     const all = state.records
       .map((r) => ({ ...r, d: parseKey(r.date) }))
-      .filter((r) => r.d <= today)
+      .filter((r) => r.d <= today && (!floor || r.d >= floor))
       .sort((a, b) => (a.d - b.d) || a.time.localeCompare(b.time));
 
     const first = all.length ? all[0].d : null;
@@ -874,7 +918,10 @@
     WINDOWS.forEach((w) => {
       const winStart = new Date(today);
       winStart.setDate(winStart.getDate() - (w.days - 1));
-      const start = first && first > winStart ? first : winStart;
+      let start = winStart;
+      if (floor && floor > start) start = floor;
+      // 통계 기준일이 있으면 그날부터 경과 일수를 세고, 없으면 첫 기록부터
+      if (!floor && first && first > start) start = first;
       const count = all.filter((r) => r.d >= start).length;
       const covered = diffDays(start, today) + 1;
       windows[w.key] = {
@@ -907,7 +954,10 @@
       if (r.mood && moodCounts[r.mood] !== undefined) { moodCounts[r.mood] += 1; tagged += 1; }
     });
 
-    return { all, windows, monthCount, yearCount, todayCount, months, moodCounts, tagged, total: all.length };
+    return {
+      all, windows, monthCount, yearCount, todayCount, months, moodCounts, tagged,
+      total: all.length, base: floor, baseDays: floor ? diffDays(floor, today) + 1 : null,
+    };
   }
 
   /* ───────── 달력 상태 ───────── */
@@ -990,6 +1040,12 @@
     $('statMonth').textContent = st.monthCount;
     $('statYear').textContent = st.yearCount;
 
+    if ($('statsBase')) {
+      $('statsBase').textContent = st.base
+        ? `통계 기준: ${fmtDot(dateKey(st.base))} ~`
+        : '통계 기준: 전체 기록 ~';
+    }
+
     $('avgGrid').innerHTML = WINDOWS.map((w) => {
       const a = st.windows[w.key];
       let intervalText;
@@ -997,9 +1053,11 @@
       if (a.count === 0) { intervalText = '이 기간 기록 없음'; empty = true; }
       else if (a.interval == null) { intervalText = '2회부터 계산돼요'; empty = true; }
       else { intervalText = `평균 ${fmtNum(a.interval)}일마다`; }
+      // 통계 기준일·첫 기록 때문에 기간보다 짧게 세면 그 일수를 같이 보여 준다
+      const rangeText = a.covered < w.days ? `${a.covered}일치` : `최근 ${w.days}일`;
       return `
         <div class="avg-card" data-window="${w.key}">
-          <div class="avg-head"><span class="avg-label">${w.label}</span><span class="avg-range">${w.range}</span></div>
+          <div class="avg-head"><span class="avg-label">${w.label}</span><span class="avg-range">${rangeText}</span></div>
           <div class="avg-count">${a.count}<small>회</small></div>
           <div class="avg-interval${empty ? ' is-empty' : ''}">${intervalText}</div>
         </div>`;
@@ -1095,6 +1153,14 @@
       $('startNote').textContent = `함께한 지 ${Math.max(days, 1)}일`;
     } else {
       $('startNote').textContent = '아직 정하지 않았어요';
+    }
+
+    $('statsStartDate').value = state.settings.statsStartDate || '';
+    if (state.settings.statsStartDate) {
+      const days = diffDays(parseKey(state.settings.statsStartDate), new Date()) + 1;
+      $('statsStartNote').textContent = `${fmtDot(state.settings.statsStartDate)}부터 ${Math.max(days, 1)}일치로 계산해요`;
+    } else {
+      $('statsStartNote').textContent = '비우면 모든 기록으로 계산해요';
     }
   }
 
@@ -1427,7 +1493,7 @@
       app: 'heartnote',
       version: 1,
       exportedAt: new Date().toISOString(),
-      settings: { startDate: state.settings.startDate },
+      settings: { startDate: state.settings.startDate, statsStartDate: state.settings.statsStartDate },
       records: state.records,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -1463,6 +1529,10 @@
       state.settings.startDate = parsed.settings.startDate;
       state.settings.startUpdatedAt = stamp;
     }
+    if (parsed && parsed.settings && typeof parsed.settings.statsStartDate === 'string') {
+      state.settings.statsStartDate = isDateKey(parsed.settings.statsStartDate) ? parsed.settings.statsStartDate : '';
+      state.settings.statsStartUpdatedAt = stamp;
+    }
     // 백업에는 PIN이 담기지 않으므로 복원 후 잠금은 꺼 둔다 (PIN 분실 복구 경로)
     state.settings.pinOn = false;
     state.settings.pin = '';
@@ -1470,6 +1540,7 @@
     cleaned.forEach((r) => markDirty(r.id));
     gone.forEach((id) => markDirty(id));
     if (state.settings.startUpdatedAt) markDirty(META_START);
+    if (state.settings.statsStartUpdatedAt) markDirty(META_STATS_START);
     unlock();
     closeSheet($('forgotSheet'));
     renderAll();
@@ -1534,6 +1605,35 @@
     renderSettings();
     renderHome();
     showToast('시작일을 지웠어요');
+  });
+
+  /* ───────── 설정: 통계 기준 시작일 ──────── */
+  function setStatsStart(v) {
+    state.settings.statsStartDate = v || '';
+    state.settings.statsStartUpdatedAt = Date.now();
+    touched.statsStart = true;
+    $('statsStartDate').value = v || '';
+    save();
+    markDirty(META_STATS_START);
+    renderSettings();
+    renderStats();
+    renderHome();
+  }
+
+  $('statsStartDate').addEventListener('change', () => {
+    const v = $('statsStartDate').value;
+    if (v && v > todayKey()) {
+      showToast('오늘 이전 날짜로 정해 주세요');
+      $('statsStartDate').value = state.settings.statsStartDate || '';
+      return;
+    }
+    setStatsStart(v);
+    showToast(v ? `${fmtDot(v)}부터 통계를 세요` : '모든 기록으로 통계를 세요');
+  });
+
+  $('statsStartReset').addEventListener('click', () => {
+    setStatsStart(DEFAULT_STATS_START);
+    showToast(`기본 통계 기준(${fmtDot(DEFAULT_STATS_START)})으로 돌렸어요`);
   });
 
   /* ───────── PIN ───────── */

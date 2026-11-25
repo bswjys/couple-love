@@ -14,7 +14,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="하트노트">
-<link rel="stylesheet" href="./styles.css?v=2">
+<link rel="stylesheet" href="./styles.css?v=3">
 </head>
 <body>
 
@@ -151,6 +151,8 @@
         <p class="page-sub">우리의 사랑 리듬</p>
       </div>
 
+      <p class="stat-base" id="statsBase">통계 기준: 2026.11.01 ~</p>
+
       <div class="stat-hero">
         <div class="stat-hero-item">
           <span class="stat-hero-label">이번 달</span>
@@ -165,7 +167,7 @@
 
       <h2 class="section-title">평균</h2>
       <div class="avg-grid" id="avgGrid"></div>
-      <p class="avg-note">최근 30 · 90 · 180 · 365일 기준이에요. 기록이 그보다 짧으면 첫 기록부터 계산해요.</p>
+      <p class="avg-note">최근 30 · 90 · 180 · 365일 기준이에요. 기록이 그보다 짧으면 통계 기준일부터 계산해요.</p>
 
       <section class="card" aria-labelledby="chartTitle">
         <div class="card-top">
@@ -259,6 +261,18 @@
         </div>
       </section>
 
+      <section class="card set-card" aria-labelledby="statsStartTitle">
+        <h2 class="card-title" id="statsStartTitle">통계</h2>
+        <label class="set-field">
+          <span class="set-field-label">통계 기준 시작일 <small>이 날부터 사랑 리듬을 세어요</small></span>
+          <input type="date" id="statsStartDate">
+        </label>
+        <div class="set-inline">
+          <button type="button" class="mini-btn" id="statsStartReset">기본값</button>
+          <span class="set-inline-note" id="statsStartNote"></span>
+        </div>
+      </section>
+
       <section class="card set-card" aria-labelledby="dataTitle">
         <h2 class="card-title" id="dataTitle">데이터</h2>
         <div class="set-row">
@@ -282,7 +296,7 @@
         <p>PIN을 잊었다면 백업 파일을 복원하면 잠금이 풀려요(복원한 뒤 PIN을 다시 켜 주세요).</p>
       </section>
 
-      <p class="foot-note" id="versionNote">하트노트 v2 · 부부 사랑 기록</p>
+      <p class="foot-note" id="versionNote">하트노트 v3 · 부부 사랑 기록</p>
     </section>
 
   </main>
@@ -447,6 +461,6 @@
 
 <noscript><p style="padding:24px;text-align:center">하트노트는 자바스크립트가 필요해요.</p></noscript>
 
-<script src="./app.js?v=2"></script>
+<script src="./app.js?v=3"></script>
 </body>
 </html>

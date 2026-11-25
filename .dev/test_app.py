@@ -10,6 +10,7 @@
 """
 import datetime
 import json
+import math
 import os
 import re
 import sys
@@ -123,18 +124,27 @@ def avg_card_texts(page):
         "interval: e.querySelector('.avg-interval').textContent.trim() }))")
 
 
-def expected_window(dates, days):
+def expected_window(dates, days, floor=None):
+    """기대값: 통계 기준일(floor)이 있으면 그날부터, 없으면 첫 기록부터 경과 일수를 센다."""
     start = TODAY - datetime.timedelta(days=days - 1)
     first = min(dates) if dates else None
-    s = max(start, first) if first else start
+    if floor:
+        s = max(start, floor)
+    else:
+        s = max(start, first) if first else start
     count = sum(1 for d in dates if d >= s)
     covered = (TODAY - s).days + 1
     interval = None if count < 2 else covered / count
-    return count, interval
+    return count, interval, covered
+
+
+def want_range(covered, days):
+    return f'{covered}일치' if covered < days else f'최근 {days}일'
 
 
 def fmt_num(v):
-    r = round(v * 10) / 10
+    # 앱(Math.round)과 같이 0.5는 올림
+    r = math.floor(v * 10 + 0.5) / 10
     return str(int(r)) if r == int(r) else f'{r:.1f}'
 
 
@@ -272,8 +282,9 @@ def main():
             rec(key(shift(200)), '21:15', '', ''),
             rec(key(shift(300)), '20:45', '', ''),
         ]
-        seed(page, seed_records, settings={'pinOn': False, 'pin': '', 'startDate': '2014-05-10'})
+        seed(page, seed_records, settings={'pinOn': False, 'pin': '', 'startDate': '2014-05-10', 'statsStartDate': '2026-01-01'})
         dates = [shift(d) for d in (0, 0, 5, 20, 45, 100, 200, 300)]
+        floor = datetime.date(2026, 1, 1)
 
         check('D1 오늘 2번 문구', page.inner_text('#heroTitle') == '오늘 2번, 사랑을 남겼어요', page.inner_text('#heroTitle'))
         check('D2 함께한 지 표시', '일' in page.inner_text('#loveLine') and page.is_visible('#loveLine'), page.inner_text('#loveLine'))
@@ -285,14 +296,14 @@ def main():
         page.click('.tab[data-view="stats"]')
         page.wait_for_timeout(300)
         exp = {
-            'month': expected_window(dates, 30),
-            'quarter': expected_window(dates, 90),
-            'half': expected_window(dates, 180),
-            'yearAvg': expected_window(dates, 365),
+            'month': expected_window(dates, 30, floor),
+            'quarter': expected_window(dates, 90, floor),
+            'half': expected_window(dates, 180, floor),
+            'yearAvg': expected_window(dates, 365, floor),
         }
         cards = {c['key']: c for c in avg_card_texts(page)}
         for k in ('month', 'quarter', 'half', 'yearAvg'):
-            count, interval = exp[k]
+            count, interval, covered = exp[k]
             want_count = f'{count}회'
             want_interval = f'평균 {fmt_num(interval)}일마다' if interval else '2회부터 계산돼요'
             check(f'D5 {k} 횟수', cards[k]['count'] == want_count, f"{cards[k]['count']} vs {want_count}")
@@ -320,6 +331,7 @@ def main():
         check('D13 기분별 숫자', '행복 2' in mood_txt and '설렘 1' in mood_txt and '고마움 1' in mood_txt, mood_txt)
         check('D14 통계 가로 넘침 0', overflow(page) == [], overflow(page))
         check('D15 통계 오류 0', errs == [], errs)
+        check('D16 통계 기준일 안내', page.inner_text('#statsBase') == '통계 기준: 2026.01.01 ~', page.inner_text('#statsBase'))
         shot(page, '07-stats.png')
 
         # ══════════ E. 달력 ══════════
@@ -460,7 +472,7 @@ def main():
         seed(page, [
             rec(key(TODAY), '21:00', '행복', '백업할 기록1'),
             rec(key(shift(3)), '20:00', '포근', '백업할 기록2'),
-        ], settings={'startDate': '2015-03-02'})
+        ], settings={'startDate': '2015-03-02', 'statsStartDate': '2026-11-03'})
         page.click('.tab[data-view="settings"]')
         page.wait_for_timeout(200)
 
@@ -476,6 +488,7 @@ def main():
         check('G2 백업 내용 기록 2개', payload.get('app') == 'heartnote' and len(payload.get('records', [])) == 2, payload.keys())
         check('G3 백업에 PIN 없음', 'pin' not in json.dumps(payload.get('settings', {})), payload.get('settings'))
         check('G4 백업 시작일 포함', payload['settings'].get('startDate') == '2015-03-02', payload.get('settings'))
+        check('G4b 백업 통계 기준일 포함', payload['settings'].get('statsStartDate') == '2026-11-03', payload.get('settings'))
 
         page.click('#btnReset')
         page.wait_for_timeout(350)
@@ -485,6 +498,7 @@ def main():
         page.wait_for_timeout(500)
         check('G6 복원 기록 수', len(store(page)['records']) == 2, store(page)['records'])
         check('G7 복원 시작일', store(page)['settings']['startDate'] == '2015-03-02', store(page).get('settings'))
+        check('G7b 복원 통계 기준일', store(page)['settings']['statsStartDate'] == '2026-11-03', store(page).get('settings'))
         check('G8 복원 안내 토스트', '복원' in page.inner_text('#toast'), page.inner_text('#toast'))
 
         # 잘못된 파일
@@ -495,6 +509,102 @@ def main():
         page.wait_for_timeout(350)
         check('G9 잘못된 파일 거부', len(store(page)['records']) == 2 and '백업 파일이 아니에요' in page.inner_text('#toast'), page.inner_text('#toast'))
         check('G10 G단계 오류 0', errs == [], errs)
+        ctx.close()
+
+        # ══════════ M. 통계 기준 시작일 (기본 2026-11-01) ══════════
+        BASE = datetime.date(2026, 11, 1)
+        base_days = (TODAY - BASE).days + 1
+        ctx, page, errs = new_page(browser)
+        page.goto(APP)
+        page.wait_for_timeout(400)
+
+        s = store(page)
+        check('M1 기본 통계 기준일 저장', s['settings'].get('statsStartDate') == '2026-11-01', s.get('settings'))
+        page.click('.tab[data-view="settings"]')
+        page.wait_for_timeout(250)
+        check('M2 설정 입력값', page.input_value('#statsStartDate') == '2026-11-01', page.input_value('#statsStartDate'))
+        check('M3 설정 안내 문구', '2026.11.01' in page.inner_text('#statsStartNote'), page.inner_text('#statsStartNote'))
+
+        old = datetime.date(2026, 10, 20)
+        seed(page, [
+            rec(key(old), '21:00', '행복', '기준일 이전'),
+            rec('2026-11-05', '20:00', '행복', ''),
+            rec('2026-11-12', '21:10', '포근', ''),
+            rec(key(shift(2)), '22:00', '행복', ''),
+            rec(key(TODAY), '09:00', '설렘', ''),
+        ], settings={'statsStartDate': '2026-11-01'})
+        all_dates = [old, datetime.date(2026, 11, 5), datetime.date(2026, 11, 12), shift(2), TODAY]
+        in_base = sorted(d for d in all_dates if BASE <= d <= TODAY)
+
+        page.click('.tab[data-view="stats"]')
+        page.wait_for_timeout(300)
+        check('M4 통계 기준 안내', page.inner_text('#statsBase') == '통계 기준: 2026.11.01 ~', page.inner_text('#statsBase'))
+        month_in_base = sum(1 for d in in_base if d.year == TODAY.year and d.month == TODAY.month)
+        check('M5 이번 달은 기준일 이후만', page.inner_text('#statMonth') == str(month_in_base), f"{page.inner_text('#statMonth')} vs {month_in_base}")
+        year_in_base = sum(1 for d in in_base if d.year == TODAY.year)
+        check('M6 올해는 기준일 이후만', page.inner_text('#statYear') == str(year_in_base), f"{page.inner_text('#statYear')} vs {year_in_base}")
+
+        cards = {c['key']: c for c in avg_card_texts(page)}
+        for k, days in (('month', 30), ('quarter', 90), ('half', 180), ('yearAvg', 365)):
+            count, interval, covered = expected_window(in_base, days, BASE)
+            want_count = f'{count}회'
+            want_interval = f'평균 {fmt_num(interval)}일마다' if interval else '2회부터 계산돼요'
+            check(f'M7 {k} 기준일 이후 횟수', cards[k]['count'] == want_count, f"{cards[k]['count']} vs {want_count}")
+            check(f'M8 {k} 평균 간격(경과 일수)', cards[k]['interval'] == want_interval, f"{cards[k]['interval']} vs {want_interval}")
+        ranges = page.eval_on_selector_all('#avgGrid .avg-range', 'els => els.map(e => e.textContent.trim())')
+        want_ranges = []
+        for days in (30, 90, 180, 365):
+            _, _, covered = expected_window(in_base, days, BASE)
+            want_ranges.append(want_range(covered, days))
+        check('M9 기간 표시(일수)', ranges == want_ranges, f'{ranges} vs {want_ranges}')
+        mood_txt = re.sub(r'\s+', ' ', page.eval_on_selector('#moodStats', 'e => e.textContent'))
+        check('M10 기분 집계도 기준일 이후만', '행복 2' in mood_txt and '포근 1' in mood_txt and '설렘 1' in mood_txt, mood_txt)
+        check('M10b 기준일 이전 기록은 보관', len(store(page)['records']) == 5 and any(r['memo'] == '기준일 이전' for r in store(page)['records']), store(page)['records'])
+        check('M11 통계 넘침 0', overflow(page) == [], overflow(page))
+        shot(page, '15-stats-nov1.png')
+
+        # 기준일 변경
+        page.click('.tab[data-view="settings"]')
+        page.wait_for_timeout(200)
+        page.fill('#statsStartDate', '2026-11-10')
+        page.wait_for_timeout(300)
+        check('M12 기준일 변경 저장', store(page)['settings'].get('statsStartDate') == '2026-11-10', store(page).get('settings'))
+        page.click('.tab[data-view="stats"]')
+        page.wait_for_timeout(300)
+        check('M13 안내 문구 갱신', page.inner_text('#statsBase') == '통계 기준: 2026.11.10 ~', page.inner_text('#statsBase'))
+        changed = sorted(d for d in all_dates if datetime.date(2026, 11, 10) <= d <= TODAY)
+        check('M14 변경 후 이번 달 집계', page.inner_text('#statMonth') == str(sum(1 for d in changed if d.year == TODAY.year and d.month == TODAY.month)), page.inner_text('#statMonth'))
+
+        # 기준일 비우면 전체 기록
+        page.click('.tab[data-view="settings"]')
+        page.wait_for_timeout(200)
+        page.click('#statsStartDate')
+        page.press('#statsStartDate', 'Control+a')
+        page.press('#statsStartDate', 'Backspace')
+        page.press('#statsStartDate', 'Tab')
+        page.wait_for_timeout(300)
+        check('M15 기준일 비움 저장', store(page)['settings'].get('statsStartDate') == '', store(page).get('settings'))
+        check('M15a 비움 안내 문구', '모든 기록' in page.inner_text('#statsStartNote'), page.inner_text('#statsStartNote'))
+        page.click('.tab[data-view="stats"]')
+        page.wait_for_timeout(300)
+        check('M15b 전체 기록 기준', page.inner_text('#statsBase') == '통계 기준: 전체 기록 ~', page.inner_text('#statsBase'))
+        all_year = sum(1 for d in all_dates if d.year == TODAY.year and d <= TODAY)
+        check('M15c 기준일 이전도 집계', page.inner_text('#statYear') == str(all_year), f"{page.inner_text('#statYear')} vs {all_year}")
+
+        # 기본값 복귀
+        page.click('.tab[data-view="settings"]')
+        page.wait_for_timeout(200)
+        page.click('#statsStartReset')
+        page.wait_for_timeout(300)
+        check('M16 기본값 버튼', store(page)['settings'].get('statsStartDate') == '2026-11-01' and page.input_value('#statsStartDate') == '2026-11-01', page.input_value('#statsStartDate'))
+
+        page.reload()
+        page.wait_for_timeout(450)
+        check('M17 새로고침 후 유지', store(page)['settings'].get('statsStartDate') == '2026-11-01', store(page).get('settings'))
+        page.click('.tab[data-view="stats"]')
+        page.wait_for_timeout(250)
+        check('M18 새로고침 후 통계 기준', page.inner_text('#statsBase') == '통계 기준: 2026.11.01 ~', page.inner_text('#statsBase'))
+        check('M19 M단계 오류 0', errs == [], errs)
         ctx.close()
 
         # ══════════ H. 미션 ══════════

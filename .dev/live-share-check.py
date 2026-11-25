@@ -155,6 +155,16 @@ with sync_playwright() as p:
     check('B PIN 없음', B.evaluate("() => JSON.parse(localStorage.getItem('heartnote.v1')).settings.pin") == '')
 
     # 스크린샷 (라이브 390 연결 상태)
+    # 통계 기준 시작일(기본 2026-11-01) 라이브 확인 · 요청 스크린샷
+    B.click('.tab[data-view="stats"]')
+    B.wait_for_timeout(600)
+    check('라이브 통계 기준 표시', B.inner_text('#statsBase') == '통계 기준: 2026.11.01 ~', B.inner_text('#statsBase'))
+    check('라이브 이번 달 집계', B.inner_text('#statMonth') != '0', B.inner_text('#statMonth'))
+    B.evaluate("() => { const t = document.getElementById('toast'); if (t) t.classList.remove('show'); }")
+    B.screenshot(path=os.path.join(SHOT, 'live-stats-nov1-390.png'), full_page=True)
+    B.click('.tab[data-view="home"]')
+    B.wait_for_timeout(300)
+
     A.click('.tab[data-view="home"]')
     A.wait_for_timeout(600)
     A.evaluate("() => { const t = document.getElementById('toast'); if (t) t.classList.remove('show'); }")
