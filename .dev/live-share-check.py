@@ -161,7 +161,7 @@ with sync_playwright() as p:
     check('라이브 통계 기준 표시', B.inner_text('#statsBase') == '통계 기준: 2026.11.01 ~', B.inner_text('#statsBase'))
     check('라이브 이번 달 집계', B.inner_text('#statMonth') != '0', B.inner_text('#statMonth'))
     B.evaluate("() => { const t = document.getElementById('toast'); if (t) t.classList.remove('show'); }")
-    B.screenshot(path=os.path.join(SHOT, 'live-stats-nov1-390.png'), full_page=True)
+    B.screenshot(path=os.path.join(SHOT, 'live-stats-nov1-390.png'), full_page=False)
     B.click('.tab[data-view="home"]')
     B.wait_for_timeout(300)
 
