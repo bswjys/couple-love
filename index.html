@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>하트노트 · 부부 사랑 기록</title>
+<meta name="theme-color" content="#FFF7FA">
+<meta name="description" content="사랑한 날을 하트로 남기고 우리의 리듬을 통계로 보는 부부 사랑 노트">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="icon" href="./icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="하트노트">
+<link rel="stylesheet" href="./styles.css?v=1">
+</head>
+<body>
+
+<!-- ───────── PIN 잠금 화면 ───────── -->
+<div class="lock" id="lockScreen" hidden>
+  <div class="lock-inner">
+    <div class="lock-heart" aria-hidden="true">
+      <svg viewBox="0 0 24 22"><path d="M12 21S1.5 14.6 1.5 7.6C1.5 3.9 4.4 1 8 1c1.7 0 3.2.7 4 1.9C12.8 1.7 14.3 1 16 1c3.6 0 6.5 2.9 6.5 6.6C22.5 14.6 12 21 12 21z"/></svg>
+    </div>
+    <h2>하트노트</h2>
+    <p class="lock-hint" id="lockHint">PIN 4자리를 입력해 주세요</p>
+    <div class="pin-dots" id="lockDots" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <div class="keypad" id="lockKeypad" role="group" aria-label="PIN 숫자 키패드">
+      <button type="button" data-key="1" aria-label="1">1</button>
+      <button type="button" data-key="2" aria-label="2">2</button>
+      <button type="button" data-key="3" aria-label="3">3</button>
+      <button type="button" data-key="4" aria-label="4">4</button>
+      <button type="button" data-key="5" aria-label="5">5</button>
+      <button type="button" data-key="6" aria-label="6">6</button>
+      <button type="button" data-key="7" aria-label="7">7</button>
+      <button type="button" data-key="8" aria-label="8">8</button>
+      <button type="button" data-key="9" aria-label="9">9</button>
+      <span class="keypad-blank"></span>
+      <button type="button" data-key="0" aria-label="0">0</button>
+      <button type="button" data-key="del" class="keypad-del" aria-label="지우기">⌫</button>
+    </div>
+    <button type="button" class="lock-forgot" id="lockForgot">PIN을 잊었어요</button>
+  </div>
+  <p class="lock-foot">기록은 이 기기 안에만 저장돼요</p>
+</div>
+
+<!-- ───────── 앱 본문 ───────── -->
+<div class="app" id="appRoot">
+  <header class="head">
+    <div class="head-row">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 22"><path d="M12 21S1.5 14.6 1.5 7.6C1.5 3.9 4.4 1 8 1c1.7 0 3.2.7 4 1.9C12.8 1.7 14.3 1 16 1c3.6 0 6.5 2.9 6.5 6.6C22.5 14.6 12 21 12 21z"/></svg>
+        </span>
+        하트노트
+      </div>
+      <span class="date-chip" id="headDate">11월 25일 수요일</span>
+    </div>
+    <p class="head-sub" id="headSub">오늘도 사랑을 남겨 볼까요?</p>
+  </header>
+
+  <main class="main">
+
+    <!-- ══ 홈 ══ -->
+    <section class="view" id="view-home" aria-labelledby="homeTitle">
+      <h1 class="sr-only" id="homeTitle">하트노트 홈</h1>
+
+      <div class="love-line" id="loveLine" hidden>
+        <span class="love-line-label">우리 함께한 지</span>
+        <b id="loveDays">0일</b>
+      </div>
+
+      <div class="hero">
+        <button type="button" class="heart-btn" id="heartBtn" aria-label="오늘 사랑한 날로 기록하기">
+          <span class="heart-btn-glow" aria-hidden="true"></span>
+          <svg class="heart-btn-svg" viewBox="0 0 24 22" aria-hidden="true">
+            <defs>
+              <linearGradient id="heartGrad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#FF9CBC"/>
+                <stop offset="0.55" stop-color="#FF6F9C"/>
+                <stop offset="1" stop-color="#F0427C"/>
+              </linearGradient>
+              <linearGradient id="heartShine" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.5"/>
+                <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <path class="heart-path" d="M12 21S1.5 14.6 1.5 7.6C1.5 3.9 4.4 1 8 1c1.7 0 3.2.7 4 1.9C12.8 1.7 14.3 1 16 1c3.6 0 6.5 2.9 6.5 6.6C22.5 14.6 12 21 12 21z" fill="url(#heartGrad)"/>
+            <ellipse cx="8.7" cy="6.3" rx="2.2" ry="1.5" fill="url(#heartShine)" transform="rotate(-24 8.7 6.3)"/>
+          </svg>
+          <span class="heart-btn-plus" id="heartPlus" aria-hidden="true">+</span>
+          <span class="heart-burst" id="heartBurst" aria-hidden="true"></span>
+        </button>
+        <p class="hero-title" id="heroTitle">오늘은 아직 하트가 없어요</p>
+        <p class="hero-sub" id="heroSub">하트를 누르면 오늘 날짜로 기록돼요</p>
+        <div class="hero-chips">
+          <span class="chip">오늘 <b id="chipToday">0</b>번</span>
+          <span class="chip">이번 달 <b id="chipMonth">0</b>번</span>
+          <span class="chip">올해 <b id="chipYear">0</b>번</span>
+        </div>
+      </div>
+
+      <!-- 오늘의 사랑 표현 -->
+      <section class="card mission-card" aria-labelledby="missionTitle">
+        <div class="card-top">
+          <span class="card-tag">오늘의 사랑 표현</span>
+          <button type="button" class="mini-btn" id="missionShuffle" aria-label="다른 미션 보기">다른 미션</button>
+        </div>
+        <h2 class="mission-text" id="missionText">10초 포옹하기</h2>
+        <p class="mission-sub" id="missionSub">작은 것부터, 오늘 한 번</p>
+        <button type="button" class="mission-done" id="missionDone" aria-pressed="false">
+          <span class="check" aria-hidden="true">✓</span> 오늘 했어요
+        </button>
+      </section>
+
+      <!-- 최근 기록 -->
+      <section class="card" aria-labelledby="recentTitle">
+        <div class="card-top">
+          <h2 class="card-title" id="recentTitle">최근 기록</h2>
+          <button type="button" class="mini-btn" id="goCalendar">달력 보기</button>
+        </div>
+        <div class="recent-list" id="recentList"></div>
+      </section>
+
+      <p class="foot-note">기록은 이 기기 브라우저에만 저장돼요 · 설정에서 백업할 수 있어요</p>
+    </section>
+
+    <!-- ══ 통계 ══ -->
+    <section class="view" id="view-stats" aria-labelledby="statsTitle" hidden>
+      <div class="page-head">
+        <h1 class="page-title" id="statsTitle">통계</h1>
+        <p class="page-sub">우리의 사랑 리듬</p>
+      </div>
+
+      <div class="stat-hero">
+        <div class="stat-hero-item">
+          <span class="stat-hero-label">이번 달</span>
+          <b class="stat-hero-value"><span id="statMonth">0</span><small>회</small></b>
+        </div>
+        <span class="stat-hero-divider" aria-hidden="true"></span>
+        <div class="stat-hero-item">
+          <span class="stat-hero-label">올해</span>
+          <b class="stat-hero-value"><span id="statYear">0</span><small>회</small></b>
+        </div>
+      </div>
+
+      <h2 class="section-title">평균</h2>
+      <div class="avg-grid" id="avgGrid"></div>
+      <p class="avg-note">최근 30 · 90 · 180 · 365일 기준이에요. 기록이 그보다 짧으면 첫 기록부터 계산해요.</p>
+
+      <section class="card" aria-labelledby="chartTitle">
+        <div class="card-top">
+          <h2 class="card-title" id="chartTitle">최근 6개월</h2>
+          <span class="card-meta" id="chartTotal">0회</span>
+        </div>
+        <div class="chart" id="monthChart"></div>
+      </section>
+
+      <section class="card" aria-labelledby="moodTitle">
+        <div class="card-top">
+          <h2 class="card-title" id="moodTitle">기분 태그</h2>
+          <span class="card-meta" id="moodTotal">0개</span>
+        </div>
+        <div class="mood-stats" id="moodStats"></div>
+      </section>
+
+      <p class="foot-note">기록이 쌓일수록 평균이 더 정확해져요</p>
+    </section>
+
+    <!-- ══ 달력 ══ -->
+    <section class="view" id="view-calendar" aria-labelledby="calTitle" hidden>
+      <div class="page-head">
+        <h1 class="page-title" id="calTitle">달력</h1>
+        <p class="page-sub" id="calSub">하트가 있는 날을 눌러 보세요</p>
+      </div>
+
+      <div class="card cal-card">
+        <div class="cal-head">
+          <button type="button" class="cal-nav" id="calPrev" aria-label="이전 달">‹</button>
+          <button type="button" class="cal-month" id="calMonth" title="이번 달로 돌아가기">2026년 11월</button>
+          <button type="button" class="cal-nav" id="calNext" aria-label="다음 달">›</button>
+        </div>
+        <div class="cal-week" aria-hidden="true">
+          <span class="sun">일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span class="sat">토</span>
+        </div>
+        <div class="cal-grid" id="calGrid" role="group" aria-label="월간 달력"></div>
+        <div class="cal-sum">
+          <span id="calSumDays">0일</span>
+          <span class="dot-sep" aria-hidden="true">·</span>
+          <span id="calSumHearts">하트 0개</span>
+        </div>
+      </div>
+
+      <button type="button" class="add-row" id="calAdd">
+        <span class="add-icon" aria-hidden="true">+</span> 날짜를 골라 기록 추가
+      </button>
+    </section>
+
+    <!-- ══ 설정 ══ -->
+    <section class="view" id="view-settings" aria-labelledby="setTitle" hidden>
+      <div class="page-head">
+        <h1 class="page-title" id="setTitle">설정</h1>
+        <p class="page-sub">우리에게 맞게 조용히 조절해요</p>
+      </div>
+
+      <section class="card set-card" aria-labelledby="lockTitle">
+        <h2 class="card-title" id="lockTitle">잠금</h2>
+        <div class="set-row">
+          <div class="set-label">
+            <b>PIN 잠금</b>
+            <span>앱을 열 때 4자리 PIN을 물어봐요</span>
+          </div>
+          <button type="button" class="switch" id="pinToggle" role="switch" aria-checked="false" aria-label="PIN 잠금"><span></span></button>
+        </div>
+        <div class="set-row" id="pinChangeRow" hidden>
+          <div class="set-label">
+            <b>PIN 번호 변경</b>
+            <span id="pinChangeSub">4자리 숫자</span>
+          </div>
+          <button type="button" class="mini-btn" id="pinChange">변경</button>
+        </div>
+        <div class="set-row" id="pinLockRow" hidden>
+          <div class="set-label">
+            <b>지금 잠그기</b>
+            <span>바로 잠금 화면으로 돌아가요</span>
+          </div>
+          <button type="button" class="mini-btn" id="lockNow">잠금</button>
+        </div>
+      </section>
+
+      <section class="card set-card" aria-labelledby="startTitle">
+        <h2 class="card-title" id="startTitle">우리 이야기</h2>
+        <label class="set-field">
+          <span class="set-field-label">함께한 첫날 <small>선택 · 홈에 함께한 날짜를 세어 드려요</small></span>
+          <input type="date" id="startDate">
+        </label>
+        <div class="set-inline">
+          <button type="button" class="mini-btn" id="startClear">지우기</button>
+          <span class="set-inline-note" id="startNote"></span>
+        </div>
+      </section>
+
+      <section class="card set-card" aria-labelledby="dataTitle">
+        <h2 class="card-title" id="dataTitle">데이터</h2>
+        <div class="set-row">
+          <div class="set-label"><b>백업</b><span>기록을 JSON 파일로 저장해요</span></div>
+          <button type="button" class="mini-btn" id="btnBackup">저장</button>
+        </div>
+        <div class="set-row">
+          <div class="set-label"><b>복원</b><span>백업 파일로 되돌려요</span></div>
+          <button type="button" class="mini-btn" id="btnRestore">불러오기</button>
+        </div>
+        <div class="set-row">
+          <div class="set-label"><b>전체 삭제</b><span>모든 하트 기록을 지워요</span></div>
+          <button type="button" class="mini-btn danger" id="btnReset">삭제</button>
+        </div>
+      </section>
+
+      <section class="card set-card privacy" aria-labelledby="privacyTitle">
+        <h2 class="card-title" id="privacyTitle">사생활 보호</h2>
+        <p>기록은 서버로 보내지 않고 이 기기 브라우저(localStorage)에만 저장해요. PIN은 기기 안에만 보관되고 백업 파일에는 담기지 않아요.</p>
+        <p>PIN을 잊었다면 백업 파일을 복원하면 잠금이 풀려요(복원한 뒤 PIN을 다시 켜 주세요).</p>
+      </section>
+
+      <p class="foot-note" id="versionNote">하트노트 v1 · 부부 사랑 기록</p>
+    </section>
+
+  </main>
+
+  <!-- ───────── 하단 탭 ───────── -->
+  <nav class="tabbar" aria-label="화면 이동">
+    <button type="button" class="tab is-active" data-view="home" aria-current="page">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5S4 15.3 4 9.6C4 6.8 6.2 4.6 9 4.6c1.3 0 2.5.6 3 1.5.5-.9 1.7-1.5 3-1.5 2.8 0 5 2.2 5 5 0 5.7-8 10.9-8 10.9z"/></svg>
+      <span>홈</span>
+    </button>
+    <button type="button" class="tab" data-view="stats">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V11M12 19V5M19 19v-5"/></svg>
+      <span>통계</span>
+    </button>
+    <button type="button" class="tab" data-view="calendar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M8 3.5v3M16 3.5v3M3.5 10h17"/><path class="tab-heart" d="M12 17.2c-1.9-1.3-3-2.3-3-3.5 0-.9.7-1.6 1.6-1.6.5 0 1 .3 1.4.8.4-.5.9-.8 1.4-.8.9 0 1.6.7 1.6 1.6 0 1.2-1.1 2.2-3 3.5z" fill="currentColor" stroke="none"/></svg>
+      <span>달력</span>
+    </button>
+    <button type="button" class="tab" data-view="settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.3"/><circle cx="9" cy="17" r="2.3"/></svg>
+      <span>설정</span>
+    </button>
+  </nav>
+</div>
+
+<!-- ───────── 기록 추가·수정 시트 ───────── -->
+<div class="sheet-backdrop" id="recordSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="recordTitle">
+    <div class="grip" aria-hidden="true"></div>
+    <h3 id="recordTitle">사랑 기록 남기기</h3>
+    <div class="field-row">
+      <label class="field">
+        <span>날짜</span>
+        <input type="date" id="recDate">
+      </label>
+      <label class="field">
+        <span>시간</span>
+        <input type="time" id="recTime" step="60">
+      </label>
+    </div>
+    <div class="field">
+      <span>기분 <small>선택</small></span>
+      <div class="moods" id="recMoods" role="group" aria-label="기분 태그">
+        <button type="button" class="mood" data-mood="설렘" aria-pressed="false"><i>💓</i>설렘</button>
+        <button type="button" class="mood" data-mood="포근" aria-pressed="false"><i>🧸</i>포근</button>
+        <button type="button" class="mood" data-mood="행복" aria-pressed="false"><i>😊</i>행복</button>
+        <button type="button" class="mood" data-mood="고마움" aria-pressed="false"><i>🙏</i>고마움</button>
+      </div>
+    </div>
+    <label class="field">
+      <span>한 줄 메모 <small id="memoCount">0/60</small></span>
+      <textarea id="recMemo" maxlength="60" rows="2" placeholder="오늘의 한마디 (선택)"></textarea>
+    </label>
+    <div class="sheet-actions">
+      <button type="button" class="danger" id="recDelete" hidden>삭제</button>
+      <button type="button" id="recCancel">취소</button>
+      <button type="button" class="primary" id="recSave">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ───────── 날짜별 기록 시트 ───────── -->
+<div class="sheet-backdrop" id="daySheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="dayTitle">
+    <div class="grip" aria-hidden="true"></div>
+    <h3 id="dayTitle">11월 25일 수요일</h3>
+    <div class="day-list" id="dayList"></div>
+    <div class="sheet-actions">
+      <button type="button" id="dayClose">닫기</button>
+      <button type="button" class="primary" id="dayAdd">이 날 기록 추가</button>
+    </div>
+  </div>
+</div>
+
+<!-- ───────── PIN 설정 시트 ───────── -->
+<div class="sheet-backdrop" id="pinSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
+    <div class="grip" aria-hidden="true"></div>
+    <h3 id="pinTitle">PIN 번호 설정</h3>
+    <p class="sheet-desc" id="pinDesc">앱을 열 때 물어볼 4자리 숫자를 정해 주세요.</p>
+    <label class="field" id="pinRowA">
+      <span id="pinLabelA">새 PIN 4자리</span>
+      <input type="tel" id="pinA" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="••••">
+    </label>
+    <label class="field" id="pinRowB">
+      <span>한 번 더 입력</span>
+      <input type="tel" id="pinB" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="••••">
+    </label>
+    <p class="sheet-note" id="pinNote">PIN은 이 기기 안에만 저장되고 백업 파일에는 담기지 않아요.</p>
+    <p class="form-error" id="pinError" role="alert" hidden></p>
+    <div class="sheet-actions">
+      <button type="button" id="pinCancel">취소</button>
+      <button type="button" class="primary" id="pinSave">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ───────── PIN 분실 안내 시트 ───────── -->
+<div class="sheet-backdrop" id="forgotSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="forgotTitle">
+    <div class="grip" aria-hidden="true"></div>
+    <h3 id="forgotTitle">PIN을 잊으셨나요?</h3>
+    <p class="sheet-desc">PIN은 기기 밖으로 나가지 않아서 저희도 알 수 없어요. 대신 백업 파일이 있으면 복원하면서 잠금을 풀 수 있어요.</p>
+    <p class="sheet-note">복원하면 PIN 잠금이 꺼져요. 기록을 지키려면 복원 뒤 설정에서 PIN을 다시 켜 주세요.</p>
+    <div class="sheet-actions">
+      <button type="button" id="forgotCancel">닫기</button>
+      <button type="button" class="primary" id="forgotRestore">백업 파일로 복원</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept="application/json,.json" hidden>
+
+<div class="toast" id="toast" role="status" aria-live="polite">
+  <span id="toastMsg"></span>
+  <button type="button" id="toastAction" hidden>되돌리기</button>
+</div>
+
+<noscript><p style="padding:24px;text-align:center">하트노트는 자바스크립트가 필요해요.</p></noscript>
+
+<script src="./app.js?v=1"></script>
+</body>
+</html>

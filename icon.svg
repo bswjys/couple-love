@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFF7FB"/>
+      <stop offset="0.48" stop-color="#FFE7F0"/>
+      <stop offset="1" stop-color="#FFD0E0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="24%" cy="14%" r="76%">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="heart" x1="0.18" y1="0" x2="0.82" y2="1">
+      <stop offset="0" stop-color="#FFA9C4"/>
+      <stop offset="0.45" stop-color="#FF6F9C"/>
+      <stop offset="1" stop-color="#EC3B74"/>
+    </linearGradient>
+    <radialGradient id="shine" cx="34%" cy="24%" r="42%">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.6"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <circle cx="130" cy="96" r="320" fill="url(#glow)"/>
+  <g transform="translate(28,47) scale(19)">
+    <path d="M12 21S1.5 14.6 1.5 7.6C1.5 3.9 4.4 1 8 1c1.7 0 3.2.7 4 1.9C12.8 1.7 14.3 1 16 1c3.6 0 6.5 2.9 6.5 6.6C22.5 14.6 12 21 12 21z" fill="url(#heart)"/>
+    <path d="M12 21S1.5 14.6 1.5 7.6C1.5 3.9 4.4 1 8 1c1.7 0 3.2.7 4 1.9C12.8 1.7 14.3 1 16 1c3.6 0 6.5 2.9 6.5 6.6C22.5 14.6 12 21 12 21z" fill="url(#shine)"/>
+  </g>
+</svg>
