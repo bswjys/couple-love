@@ -1195,23 +1195,43 @@
 
   /* ───────── 시트 공통 ───────── */
   let sheetZ = 110;
+  /* 모달·추가창 화면 고정 (2026-11-28)
+     열 때 스크롤 위치를 저장하고 body를 fixed로 잠가 배경이 흔들리지 않게 한다.
+     시트가 겹쳐 열리거나 PIN 잠금 화면과 겹쳐도 마지막 창이 닫힐 때만 원래 위치로 돌아간다. */
+  let lockedScrollY = null;
+
+  function syncModalLock() {
+    const anySheet = Array.from(document.querySelectorAll('.sheet-backdrop')).some((s) => !s.hidden);
+    const anyOpen = anySheet || !$('lockScreen').hidden;
+    const isLocked = document.body.classList.contains('modal-open');
+
+    if (anyOpen && !isLocked) {
+      lockedScrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+      document.body.style.top = `-${lockedScrollY}px`;
+      document.body.classList.add('modal-open');
+    } else if (!anyOpen && isLocked) {
+      document.body.classList.remove('modal-open');
+      document.body.style.top = '';
+      const backY = lockedScrollY || 0;
+      lockedScrollY = null;
+      window.scrollTo(0, backY);
+    }
+  }
 
   function openSheet(el, focusEl) {
     lastFocus = document.activeElement;
     sheetZ += 1;
     el.style.zIndex = String(sheetZ);
     el.hidden = false;
-    document.body.classList.add('modal-open');
+    syncModalLock();
     if (focusEl) setTimeout(() => { try { focusEl.focus({ preventScroll: true }); } catch (e) { /* 무시 */ } }, 60);
   }
 
   function closeSheet(el) {
     el.hidden = true;
     const anyOpen = Array.from(document.querySelectorAll('.sheet-backdrop')).some((s) => !s.hidden);
-    if (!anyOpen) {
-      sheetZ = 110;
-      if ($('lockScreen').hidden) document.body.classList.remove('modal-open');
-    }
+    if (!anyOpen) sheetZ = 110;
+    syncModalLock();
     if (lastFocus && typeof lastFocus.focus === 'function') {
       try { lastFocus.focus({ preventScroll: true }); } catch (e) { /* 무시 */ }
     }
@@ -1655,15 +1675,14 @@
     $('lockScreen').hidden = false;
     $('appRoot').setAttribute('aria-hidden', 'true');
     $('appRoot').inert = true;
-    document.body.classList.add('modal-open');
+    syncModalLock();
   }
 
   function unlock() {
     $('lockScreen').hidden = true;
     $('appRoot').removeAttribute('aria-hidden');
     $('appRoot').inert = false;
-    const anySheet = Array.from(document.querySelectorAll('.sheet-backdrop')).some((s) => !s.hidden);
-    if (!anySheet) document.body.classList.remove('modal-open');
+    syncModalLock();
     pinBuffer = '';
     updateDots();
   }
@@ -1903,5 +1922,5 @@
   renderAll();
   if (shared()) connectShare({ announce: false });
   if (state.settings.pinOn && state.settings.pin) lock();
-  else document.body.classList.remove('modal-open');
+  else syncModalLock();
 })();

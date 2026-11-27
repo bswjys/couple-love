@@ -2,8 +2,8 @@
  *  - HTML·코드: 네트워크 우선 → 오프라인일 때만 캐시 (새 HTML + 옛 JS 섞임 방지)
  *  - 아이콘·manifest: 캐시 우선
  */
-const CACHE = 'couple-love-v4';
-const VERSION = '4';
+const CACHE = 'couple-love-v5';
+const VERSION = '5';
 const ASSETS = [
   './',
   './index.html',

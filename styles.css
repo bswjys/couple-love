@@ -42,11 +42,28 @@ body{
   line-height:1.45;
   letter-spacing:-.02em;
 }
-body.modal-open{overflow:hidden;}
+body.modal-open{
+  position:fixed; left:0; right:0; width:100%;
+  overflow:hidden; overscroll-behavior:none;
+}
 button{font-family:inherit;letter-spacing:inherit;color:inherit;}
 input,textarea{font-family:inherit;letter-spacing:inherit;color:inherit;}
 h1,h2,h3,p{margin:0;}
 b{font-weight:800;}
+
+/* ===== 모달·시트 화면 고정 (2026-11-28) =====
+   시트가 좌우·위아래로 흔들리지 않도록 백드롭은 배경 스크롤을 물고,
+   시트 안쪽만 세로로 스크롤한다. */
+.sheet-backdrop{
+  overflow-x:hidden;
+  overscroll-behavior:contain;
+}
+.sheet, .sheet-body{
+  overflow-x:hidden;
+  overscroll-behavior:contain;
+  touch-action:pan-y;
+  -webkit-overflow-scrolling:touch;
+}
 
 .sr-only{
   position:absolute;width:1px;height:1px;padding:0;margin:-1px;
