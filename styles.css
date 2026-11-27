@@ -505,7 +505,7 @@ b{font-weight:800;}
 .set-field-label small{font-size:11px;font-weight:600;color:var(--ink-4);}
 .set-field input[type="date"]{
   border:1px solid var(--line-strong);border-radius:12px;background:#FCFAFB;
-  padding:10px 12px;font-size:13.5px;font-weight:600;color:#2A2F37;
+  padding:10px 12px;font-size:16px;font-weight:600;color:#2A2F37;
   width:100%;-webkit-appearance:none;appearance:none;
 }
 .set-inline{display:flex;align-items:center;gap:9px;padding:4px 0 10px;}
@@ -584,7 +584,7 @@ b{font-weight:800;}
 .field > span small{font-size:10.5px;font-weight:600;color:var(--ink-4);}
 .field input[type="date"],.field input[type="time"],.field input[type="tel"],.field input[type="text"],.field input[type="url"],.field textarea{
   width:100%;border:1px solid var(--line-strong);border-radius:13px;
-  background:#FCFAFB;padding:12px;font-size:14px;font-weight:600;color:#1F242B;
+  background:#FCFAFB;padding:12px;font-size:16px;font-weight:600;color:#1F242B;
   -webkit-appearance:none;appearance:none;
   transition:border-color .15s ease, background .15s ease;
 }
@@ -760,3 +760,16 @@ b{font-weight:800;}
     transition-duration:.001ms !important;
   }
 }
+
+/* ===== 아이폰 화면 고정 (2026-11-28) =====
+   사파리·홈 화면 앱에서 화면이 커졌다 작아졌다 하지 않도록
+   - 입력창 글자는 16px 이상(아이폰 자동 확대 방지)
+   - 가로 넘침·바운스 스크롤 막음, 글자 자동 확대 막음 */
+html, body {
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+html { touch-action: manipulation; }
+input, textarea, select { font-size: max(16px, 1em); }
